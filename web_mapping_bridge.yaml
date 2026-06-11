@@ -1,0 +1,18 @@
+/web_mapping_bridge:
+  ros__parameters:
+    host: 0.0.0.0
+    imu_topic: /livox/imu
+    lidar_status_topic: ''
+    livox_custom_topic: /livox/lidar
+    log_http_requests: false
+    map_cloud_topic: corrected_map
+    max_points_per_cloud: 0
+    min_cloud_interval_sec: 0.08
+    optimized_cloud_topic: corrected_current_pcd
+    optimized_path_topic: corrected_path
+    path_max_points: 5000
+    port: 8765
+    pose_topic: pose_stamped
+    raw_cloud_topic: cloud_registered_1
+    raw_path_topic: ori_path
+    use_sim_time: false
