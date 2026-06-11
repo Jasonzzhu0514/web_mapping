@@ -50,9 +50,9 @@
                 <input id="pointBudget" type="range" min="20000" max="10000000" step="20000" value="1000000" />
               </label>
               <div class="layer-counts-compact">
-                <div><span>原始地图</span><strong id="mapPoints">0</strong></div>
-                <div><span>回环地图</span><strong id="optimizedPoints">0</strong></div>
-                <div><span>雷达实时地图</span><strong id="rawPoints">0</strong></div>
+                <div><span>全局优化地图</span><strong id="mapPoints">0</strong></div>
+                <div><span>当前建图帧</span><strong id="optimizedPoints">0</strong></div>
+                <div><span>雷达原始扫描</span><strong id="rawPoints">0</strong></div>
               </div>
             </div>
           </div>
@@ -60,17 +60,17 @@
         <div class="layer-toolbar" aria-label="Point cloud layers">
           <button class="layer-toggle is-active is-unavailable" type="button" data-source="map" aria-pressed="true">
             <span class="layer-led" aria-hidden="true"></span>
-            <span class="layer-text">原始地图</span>
+            <span class="layer-text">全局优化地图</span>
             <small class="layer-status">waiting</small>
           </button>
           <button class="layer-toggle is-active is-unavailable" type="button" data-source="optimized" aria-pressed="true">
             <span class="layer-led" aria-hidden="true"></span>
-            <span class="layer-text">回环地图</span>
+            <span class="layer-text">当前建图帧</span>
             <small class="layer-status">waiting</small>
           </button>
           <button class="layer-toggle is-active is-unavailable" type="button" data-source="raw" aria-pressed="true">
             <span class="layer-led" aria-hidden="true"></span>
-            <span class="layer-text">雷达实时地图</span>
+            <span class="layer-text">雷达原始扫描</span>
             <small class="layer-status">waiting</small>
           </button>
         </div>
@@ -236,7 +236,7 @@
                   <em class="topic-meta">-</em>
                 </div>
                 <div class="topic-row" data-topic-key="raw">
-                  <span>雷达实时地图</span>
+                  <span>雷达原始扫描</span>
                   <strong class="topic-state">waiting</strong>
                   <em class="topic-meta">-</em>
                 </div>
@@ -244,12 +244,12 @@
               <h3>输出</h3>
               <div class="topic-list">
                 <div class="topic-row" data-topic-key="map">
-                  <span>原始地图</span>
+                  <span>全局优化地图</span>
                   <strong class="topic-state">waiting</strong>
                   <em class="topic-meta">-</em>
                 </div>
                 <div class="topic-row" data-topic-key="optimized">
-                  <span>回环地图</span>
+                  <span>当前建图帧</span>
                   <strong class="topic-state">waiting</strong>
                   <em class="topic-meta">-</em>
                 </div>

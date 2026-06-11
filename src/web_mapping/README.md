@@ -1,6 +1,6 @@
-# web_mapping ROS 2 package
+# web_mapping ROS 2 包
 
-ROS 2 package for the standalone browser-based realtime point cloud mapping
-viewer. The repository-level README at the project root contains build, run,
-and protocol details.
+这是 `web_mapping` 项目中的 ROS 2 Python 包，提供浏览器点云可视化所需的 HTTP 服务、WebSocket 桥接、ROS 2 topic 订阅和前端静态资源。
+
+构建、运行、参数和协议说明请查看项目根目录的 `README.md`。
 

@@ -106,9 +106,10 @@ h1 {
 
 .layer-toolbar {
   display: inline-grid;
-  grid-template-columns: repeat(3, minmax(108px, 1fr));
+  grid-template-columns: repeat(3, minmax(122px, 1fr));
   gap: 4px;
   flex: 0 0 auto;
+  min-width: 0;
   padding: 4px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -347,8 +348,9 @@ h1 {
   align-items: center;
   gap: 1px 7px;
   min-width: 0;
-  height: 46px;
-  padding: 5px 9px;
+  width: 100%;
+  height: 50px;
+  padding: 6px 26px 6px 9px;
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
@@ -376,8 +378,8 @@ h1 {
 
 .layer-led {
   position: absolute;
-  top: 7px;
-  right: 8px;
+  top: 9px;
+  right: 9px;
   width: 9px;
   height: 9px;
   border-radius: 50%;
@@ -388,12 +390,13 @@ h1 {
 .layer-text {
   grid-area: label;
   overflow: hidden;
-  padding-right: 16px;
+  min-width: 0;
   font-size: 13px;
   font-weight: 650;
-  line-height: 1.15;
+  line-height: 1.18;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .layer-status {
@@ -945,11 +948,11 @@ pre {
   }
 
   .layer-toolbar {
-    grid-template-columns: repeat(3, minmax(86px, 1fr));
+    grid-template-columns: repeat(3, minmax(104px, 1fr));
   }
 
   .layer-toggle {
-    padding: 0 8px;
+    padding: 6px 22px 6px 8px;
   }
 }
 

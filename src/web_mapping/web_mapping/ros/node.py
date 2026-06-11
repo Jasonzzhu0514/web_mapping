@@ -176,7 +176,7 @@ class MappingWebBridge(Node):
                 client.selected_sources = {source}
                 client.send_json({"type": "selected_source", "source": source})
                 client.send_json(self.make_status_payload(source))
-        if message.get("type") == "set_sources":
+        elif message.get("type") == "set_sources":
             requested = message.get("sources", [])
             if not isinstance(requested, list):
                 return

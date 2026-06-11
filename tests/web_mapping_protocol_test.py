@@ -10,6 +10,14 @@ from __future__ import annotations
 import json
 import struct
 from array import array
+from pathlib import Path
+import sys
+
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src" / "web_mapping"))
+
+from web_mapping.protocol import DEFAULT_SOURCES, VALID_SOURCES  # noqa: E402
 
 
 def make_binary_cloud_payload(header: dict, values: array) -> bytes:
@@ -51,6 +59,11 @@ def test_binary_cloud_payload_contract() -> None:
     assert list(decoded_values) == list(values)
 
 
+def test_default_sources_keep_hidden_layers_streaming() -> None:
+    assert set(DEFAULT_SOURCES) == VALID_SOURCES
+
+
 if __name__ == "__main__":
     test_binary_cloud_payload_contract()
+    test_default_sources_keep_hidden_layers_streaming()
     print("web mapping protocol ok")

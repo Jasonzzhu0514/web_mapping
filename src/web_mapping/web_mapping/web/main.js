@@ -55,9 +55,9 @@ const UNLIMITED_POINT_BUDGET = 10000000
 const DEFAULT_VISIBLE_SOURCES = new Set(['map', 'optimized', 'raw'])
 const ACCUMULATING_SOURCES = new Set(['map', 'optimized'])
 const SOURCE_LABELS = {
-  map: '原始地图',
-  optimized: '回环地图',
-  raw: '雷达实时地图',
+  map: '全局优化地图',
+  optimized: '当前建图帧',
+  raw: '雷达原始扫描',
 }
 
 const SCENE = {
@@ -355,7 +355,7 @@ function connect() {
 
   ws.addEventListener('open', () => {
     setConnectionState('connected')
-    sendLayerSelection()
+    requestAllSources()
     startHeartbeat()
   })
   ws.addEventListener('message', (event) => {
@@ -375,9 +375,9 @@ function connect() {
   })
 }
 
-function sendLayerSelection() {
+function requestAllSources() {
   if (state.mockMode || ws?.readyState !== WebSocket.OPEN) return
-  ws.send(JSON.stringify({ type: 'set_sources', sources: [...state.visibleSources] }))
+  ws.send(JSON.stringify({ type: 'set_sources', sources: SOURCES }))
 }
 
 function startMockStream() {
@@ -394,7 +394,6 @@ function startMockStream() {
     const elapsed = (performance.now() - state.mockStartTime) / 1000
     ticks += 1
     for (const source of SOURCES) {
-      if (!state.visibleSources.has(source)) continue
       if (source === 'map' && ticks % 12 !== 1) continue
       const count = source === 'map' ? 36000 : source === 'raw' ? 12000 : 14000
       const values = buildMockCloud(count, elapsed, source)
@@ -449,7 +448,7 @@ function startMockStream() {
         raw_topic: '/livox/lidar',
       },
       topics: {
-        raw: mockTopic('raw', topicBySource.raw, state.visibleSources.has('raw') ? 10 : 0),
+        raw: mockTopic('raw', topicBySource.raw, 10),
         optimized: mockTopic('optimized', topicBySource.optimized, 10),
         map: mockTopic('map', topicBySource.map, 1),
         pose: mockTopic('pose', 'pose_stamped', 10),
@@ -574,15 +573,7 @@ function handleJson(payload) {
   if (payload.type === 'pose') updatePose(payload)
   if (payload.type === 'imu') updateImu(payload)
   if (payload.type === 'path') updatePath(payload)
-  if (payload.type === 'selected_sources' || payload.type === 'hello') {
-    const selectedSources = payload.selected_sources
-    if (Array.isArray(selectedSources)) {
-      state.visibleSources = new Set(selectedSources.filter((source) => SOURCES.includes(source)))
-      syncLayerVisibility()
-      syncLayerButtons()
-      updatePointUi()
-    }
-  }
+  if (payload.type === 'hello') requestAllSources()
 }
 
 function handleCloud(buffer) {
@@ -832,18 +823,12 @@ function setLayerButtonStatus(source, stat) {
   const stateText = stat.state || 'waiting'
   const online = stateText === 'online'
   const selected = state.visibleSources.has(source)
+  const hasCachedPoints = (state.layers[source]?.pointCount || 0) > 0
   button.classList.toggle('is-available', online)
   button.classList.toggle('is-unavailable', !online)
   button.classList.toggle('is-standby', online && !selected)
-  button.disabled = !online
-  button.setAttribute('aria-disabled', String(!online))
-  if (state.bridgeConnected && !online && selected) {
-    state.visibleSources.delete(source)
-    syncLayerVisibility()
-    syncLayerButtons()
-    syncPathVisibility()
-    sendLayerSelection()
-  }
+  button.disabled = !online && !hasCachedPoints
+  button.setAttribute('aria-disabled', String(button.disabled))
   button.title = `${SOURCE_LABELS[source]}: ${stateText}${stat.topic ? ` (${stat.topic})` : ''}`
   const status = button.querySelector('.layer-status')
   if (status) {
@@ -978,7 +963,6 @@ function toggleLayer(source) {
   syncLayerButtons()
   syncPathVisibility()
   updatePointUi()
-  sendLayerSelection()
 }
 
 function syncLayerVisibility() {
