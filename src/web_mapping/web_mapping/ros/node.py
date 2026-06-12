@@ -22,7 +22,7 @@ from web_mapping.pointcloud.codec import (
     make_binary_cloud_payload,
     stamp_to_float,
 )
-from web_mapping.protocol import DEFAULT_MAP_HISTORY_ROOT, WEB_MAPPING_TOPICS, VALID_SOURCES
+from web_mapping.protocol import DEFAULT_MAP_HISTORY_ROOT, SOURCE_LABELS, WEB_MAPPING_TOPICS, VALID_SOURCES
 from web_mapping.runtime.map_history import MapHistory
 from web_mapping.runtime.mapping_manager import MappingManager
 from web_mapping.runtime.ros_broker import RosBrokerBackend

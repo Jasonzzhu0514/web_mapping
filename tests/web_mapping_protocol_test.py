@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT / "src" / "web_mapping"))
 from web_mapping.protocol import (  # noqa: E402
     DEFAULT_MAP_HISTORY_ROOT,
     DEFAULT_SOURCES,
+    SOURCE_LABELS,
     VALID_MAPPING_COMMANDS,
     VALID_MAPPING_STATES,
     VALID_SOURCES,
@@ -69,6 +70,7 @@ def test_binary_cloud_payload_contract() -> None:
 
 def test_default_sources_keep_hidden_layers_streaming() -> None:
     assert set(DEFAULT_SOURCES) == VALID_SOURCES
+    assert set(SOURCE_LABELS) == VALID_SOURCES
 
 
 def test_mapping_control_state_machine_shell() -> None:
