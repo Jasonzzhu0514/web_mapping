@@ -46,12 +46,12 @@
               </label>
               <label class="layer-range" for="pointBudget">
                 <span>显示预算</span>
-                <strong id="pointBudgetValue">1.00M</strong>
-                <input id="pointBudget" type="range" min="20000" max="10000000" step="20000" value="1000000" />
+                <strong id="pointBudgetValue">3.00M</strong>
+                <input id="pointBudget" type="range" min="20000" max="10000000" step="20000" value="3000000" />
               </label>
               <div class="layer-counts-compact">
                 <div><span>全局优化地图</span><strong id="mapPoints">0</strong></div>
-                <div><span>当前建图帧</span><strong id="optimizedPoints">0</strong></div>
+                <div><span>累计建图地图</span><strong id="optimizedPoints">0</strong></div>
                 <div><span>雷达原始扫描</span><strong id="rawPoints">0</strong></div>
               </div>
             </div>
@@ -65,7 +65,7 @@
           </button>
           <button class="layer-toggle is-active is-unavailable" type="button" data-source="optimized" aria-pressed="true">
             <span class="layer-led" aria-hidden="true"></span>
-            <span class="layer-text">当前建图帧</span>
+            <span class="layer-text">累计建图地图</span>
             <small class="layer-status">waiting</small>
           </button>
           <button class="layer-toggle is-active is-unavailable" type="button" data-source="raw" aria-pressed="true">
@@ -295,7 +295,7 @@
                   <em class="topic-meta">-</em>
                 </div>
                 <div class="topic-row" data-topic-key="optimized">
-                  <span>当前建图帧</span>
+                  <span>累计建图地图</span>
                   <strong class="topic-state">waiting</strong>
                   <em class="topic-meta">-</em>
                 </div>

@@ -44,7 +44,13 @@ class MappingWebBridge(Node):
         self.host = str(self.get_parameter("host").value)
         self.port = int(self.get_parameter("port").value)
         self.max_points_per_cloud = int(self.get_parameter("max_points_per_cloud").value)
+        self.source_point_limits = {
+            "raw": self._source_point_limit("raw", "max_raw_points_per_cloud"),
+            "optimized": self._source_point_limit("optimized", "max_optimized_points_per_cloud"),
+            "map": self._source_point_limit("map", "max_map_points_per_cloud"),
+        }
         self.min_cloud_interval_sec = float(self.get_parameter("min_cloud_interval_sec").value)
+        self.min_map_interval_sec = float(self.get_parameter("min_map_interval_sec").value)
         self.min_telemetry_interval_sec = float(self.get_parameter("min_telemetry_interval_sec").value)
         self.path_max_points = int(self.get_parameter("path_max_points").value)
         self.map_history_root = str(self.get_parameter("map_history_root").value)
@@ -85,7 +91,7 @@ class MappingWebBridge(Node):
             "lidar_status": TopicStats(self.lidar_status_topic),
         }
 
-        cloud_qos = QoSProfile(depth=5)
+        cloud_qos = QoSProfile(depth=1)
         cloud_qos.reliability = ReliabilityPolicy.BEST_EFFORT
         map_qos = QoSProfile(depth=1)
         map_qos.reliability = ReliabilityPolicy.RELIABLE
@@ -94,7 +100,7 @@ class MappingWebBridge(Node):
         status_qos = QoSProfile(depth=1)
         status_qos.reliability = ReliabilityPolicy.RELIABLE
         status_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
-        sensor_qos = QoSProfile(depth=50)
+        sensor_qos = QoSProfile(depth=1)
         sensor_qos.reliability = ReliabilityPolicy.BEST_EFFORT
         self.mapping_command_pub = None
         if self.use_broker_backend and self.mapping_command_topic:
@@ -170,7 +176,11 @@ class MappingWebBridge(Node):
         self.declare_parameter("imu_topic", WEB_MAPPING_TOPICS["imu"])
         self.declare_parameter("lidar_status_topic", WEB_MAPPING_TOPICS["lidar_status"])
         self.declare_parameter("max_points_per_cloud", 0)
+        self.declare_parameter("max_raw_points_per_cloud", 8000)
+        self.declare_parameter("max_optimized_points_per_cloud", 8000)
+        self.declare_parameter("max_map_points_per_cloud", 50000)
         self.declare_parameter("min_cloud_interval_sec", 0.08)
+        self.declare_parameter("min_map_interval_sec", 0.5)
         self.declare_parameter("min_telemetry_interval_sec", 0.1)
         self.declare_parameter("path_max_points", 5000)
         self.declare_parameter("map_history_root", DEFAULT_MAP_HISTORY_ROOT)
@@ -179,6 +189,12 @@ class MappingWebBridge(Node):
         self.declare_parameter("mapping_status_topic", WEB_MAPPING_TOPICS["mapping_status"])
         self.declare_parameter("use_broker_backend", True)
         self.declare_parameter("log_http_requests", False)
+
+    def _source_point_limit(self, source: str, parameter_name: str) -> int:
+        source_limit = int(self.get_parameter(parameter_name).value)
+        if source_limit > 0:
+            return source_limit
+        return self.max_points_per_cloud
 
     def host_for_display(self) -> str:
         if self.host in {"0.0.0.0", "::"}:
@@ -265,7 +281,8 @@ class MappingWebBridge(Node):
         now = time.monotonic()
         point_count = int(msg.width * msg.height)
         stamp_sec = stamp_to_float(msg.header.stamp)
-        if source != "map" and now - self._last_cloud_sent_at[source] < self.min_cloud_interval_sec:
+        min_interval = self.min_map_interval_sec if source == "map" else self.min_cloud_interval_sec
+        if now - self._last_cloud_sent_at[source] < min_interval:
             self.stats[source].record(point_count, 0, stamp_sec)
             return
 
@@ -275,7 +292,7 @@ class MappingWebBridge(Node):
             return
 
         try:
-            cloud = extract_cloud_xyzi(msg, self.max_points_per_cloud)
+            cloud = extract_cloud_xyzi(msg, self.source_point_limits[source])
         except Exception as exc:  # noqa: BLE001
             self.get_logger().warning(f"Failed to encode {source} cloud: {exc}")
             self.stats[source].record(point_count, 0, stamp_sec)
@@ -289,31 +306,21 @@ class MappingWebBridge(Node):
         with self._lock:
             self._seq += 1
             seq = self._seq
-        header = {
-            "type": "cloud",
-            "source": SOURCE_LABELS[source],
-            "topic": self.stats[source].topic,
-            "seq": seq,
-            "frame_id": msg.header.frame_id,
-            "stamp_sec": stamp_sec,
-            "point_count": cloud["point_count"],
-            "source_point_count": point_count,
-            "sample_every": cloud["sample_every"],
-            "stride": 4,
-            "layout": "float32_xyzi",
-            "has_intensity": cloud["has_intensity"],
-            "bounds": cloud["bounds"],
-            "intensity_range": cloud["intensity_range"],
-        }
+        header = self._cloud_header(source, seq, msg.header.frame_id, stamp_sec, point_count, cloud)
         payload = make_binary_cloud_payload(header, cloud["values"])
         for client in clients:
-            client.send_binary(payload)
+            client.send_latest_binary(payload)
 
     def _livox_custom_callback(self, source: str, msg: Any) -> None:
         now = time.monotonic()
         point_count = int(getattr(msg, "point_num", len(getattr(msg, "points", []))) or 0)
         stamp_sec = stamp_to_float(msg.header.stamp)
-        if now - self._last_cloud_sent_at[source] < self.min_cloud_interval_sec:
+        stamp_age_sec = time.time() - stamp_sec if stamp_sec > 0 else 0.0
+        if source == "raw" and stamp_age_sec > 1.0:
+            self.stats[source].record(point_count, 0, stamp_sec)
+            return
+        min_interval = self.min_map_interval_sec if source == "map" else self.min_cloud_interval_sec
+        if now - self._last_cloud_sent_at[source] < min_interval:
             self.stats[source].record(point_count, 0, stamp_sec)
             return
 
@@ -323,7 +330,7 @@ class MappingWebBridge(Node):
             return
 
         try:
-            cloud = extract_livox_custom_xyzi(msg, self.max_points_per_cloud)
+            cloud = extract_livox_custom_xyzi(msg, self.source_point_limits[source])
         except Exception as exc:  # noqa: BLE001
             self.get_logger().warning(f"Failed to encode Livox custom cloud: {exc}")
             self.stats[source].record(point_count, 0, stamp_sec)
@@ -337,15 +344,29 @@ class MappingWebBridge(Node):
         with self._lock:
             self._seq += 1
             seq = self._seq
-        header = {
+        header = self._cloud_header(source, seq, msg.header.frame_id, stamp_sec, point_count, cloud)
+        payload = make_binary_cloud_payload(header, cloud["values"])
+        for client in clients:
+            client.send_latest_binary(payload)
+
+    def _cloud_header(
+        self,
+        source: str,
+        seq: int,
+        frame_id: str,
+        stamp_sec: float,
+        source_point_count: int,
+        cloud: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
             "type": "cloud",
             "source": SOURCE_LABELS[source],
             "topic": self.stats[source].topic,
             "seq": seq,
-            "frame_id": msg.header.frame_id,
+            "frame_id": frame_id,
             "stamp_sec": stamp_sec,
             "point_count": cloud["point_count"],
-            "source_point_count": point_count,
+            "source_point_count": source_point_count,
             "sample_every": cloud["sample_every"],
             "stride": 4,
             "layout": "float32_xyzi",
@@ -353,9 +374,6 @@ class MappingWebBridge(Node):
             "bounds": cloud["bounds"],
             "intensity_range": cloud["intensity_range"],
         }
-        payload = make_binary_cloud_payload(header, cloud["values"])
-        for client in clients:
-            client.send_binary(payload)
 
     def _pose_callback(self, msg: PoseStamped) -> None:
         pose = msg.pose

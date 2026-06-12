@@ -11,14 +11,14 @@
 当前主要图层和数据源：
 
 - 全局优化地图：默认订阅 `/web_mapping/global_map`
-- 当前建图帧：默认订阅 `/web_mapping/current_frame`
+- 累计建图地图：默认订阅 `/web_mapping/current_frame`，由宿主 broker 接入 FAST-LIO 当前帧；FAST-LIO-SAM-SC-QN 集成中对应 `/cloud_registered_1`
 - 雷达原始扫描：默认订阅 `/web_mapping/raw_cloud`
 - 轨迹、位姿、IMU、雷达状态和 topic 频率
 
 ## 功能
 
 - 浏览器实时点云渲染。
-- 多图层显示：全局优化地图、当前建图帧、雷达原始扫描。
+- 多图层显示：全局优化地图、累计建图地图、雷达原始扫描。
 - 图层开关只控制显示/隐藏，不停止后台接收和缓存。
 - 位姿和轨迹叠加显示。
 - 传感器详情卡片：连接状态、客户端数量、数据延迟、雷达频率、点数、IMU、位姿等。
@@ -119,7 +119,7 @@ http://127.0.0.1:8765/?mock=1
 - `port`：HTTP/WebSocket 端口，默认 `8765`
 - `raw_cloud_topic`：雷达原始点云 topic，默认 `/web_mapping/raw_cloud`
 - `livox_custom_topic`：Livox CustomMsg 原始点云 topic；为空时使用 `raw_cloud_topic`
-- `optimized_cloud_topic`：当前建图帧 topic，默认 `/web_mapping/current_frame`
+- `optimized_cloud_topic`：累计建图地图 topic，默认 `/web_mapping/current_frame`
 - `map_cloud_topic`：全局优化地图 topic，默认 `/web_mapping/global_map`
 - `pose_topic`：位姿 topic，默认 `/web_mapping/pose`
 - `raw_path_topic`：原始轨迹 topic，默认 `/web_mapping/raw_path`
@@ -258,8 +258,7 @@ python3 tests/map_history_test.py
 
 当前允许下载这些文件：
 
-- `map_optimized.pcd`
-- `map_raw.pcd`
+- `*_map.pcd`
 - `poses_matrix.txt`
 - `poses_kitti.txt`
 - `poses_tum.txt`

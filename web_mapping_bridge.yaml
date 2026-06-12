@@ -10,8 +10,12 @@
     map_history_root: maps
     mapping_command_topic: /web_mapping/command
     mapping_status_topic: /web_mapping/status
+    max_map_points_per_cloud: 50000
+    max_optimized_points_per_cloud: 50000
     max_points_per_cloud: 0
+    max_raw_points_per_cloud: 5000
     min_cloud_interval_sec: 0.08
+    min_map_interval_sec: 0.5
     optimized_cloud_topic: /web_mapping/current_frame
     optimized_path_topic: /web_mapping/optimized_path
     path_max_points: 5000

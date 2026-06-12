@@ -40,6 +40,9 @@ class MappingDemoHttpHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/maps/download":
             self._serve_map_download(parsed.query)
             return
+        if parsed.path == "/api/maps/preview":
+            self._serve_map_preview(parsed.query)
+            return
         if parsed.path == "/api/maps/download_session":
             self._serve_map_session_download(parsed.query)
             return
@@ -75,6 +78,26 @@ class MappingDemoHttpHandler(BaseHTTPRequestHandler):
         payload = candidate.read_bytes()
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _serve_map_preview(self, query: str) -> None:
+        bridge = self.server.bridge_node  # type: ignore[attr-defined]
+        params = parse_qs(query)
+        session_id = params.get("id", [""])[0]
+        filename = params.get("file", [""])[0]
+        max_points = self._query_int(params, "max_points", 1_000_000)
+        try:
+            payload = bridge.map_history.make_preview_payload(session_id, filename, max_points=max_points)
+        except (OSError, ValueError):
+            payload = None
+        if payload is None:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/octet-stream")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
@@ -141,6 +164,13 @@ class MappingDemoHttpHandler(BaseHTTPRequestHandler):
             self._serve_json({"ok": True, "message": "deleted"})
             return
         self._serve_json({"ok": False, "message": "删除失败"}, HTTPStatus.NOT_FOUND)
+
+    @staticmethod
+    def _query_int(params: dict[str, list[str]], key: str, default: int) -> int:
+        try:
+            return int(params.get(key, [str(default)])[0])
+        except (TypeError, ValueError):
+            return default
 
     def _handle_websocket(self) -> None:
         key = self.headers.get("Sec-WebSocket-Key", "")

@@ -20,13 +20,29 @@ class WebSocketClient:
         self.selected_sources = set(DEFAULT_SOURCES)
         self.alive = True
         self._send_lock = threading.Lock()
+        self._cloud_condition = threading.Condition()
+        self._pending_cloud_payload: bytes | None = None
+        self._cloud_sender = threading.Thread(target=self._cloud_send_loop, name="web-mapping-cloud-sender", daemon=True)
+        try:
+            self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except OSError:
+            pass
         self.sock.settimeout(60.0)
+        self._cloud_sender.start()
 
     def send_json(self, payload: dict[str, Any]) -> bool:
         return self.send_frame(json.dumps(payload, separators=(",", ":")).encode("utf-8"), opcode=0x1)
 
     def send_binary(self, payload: bytes) -> bool:
         return self.send_frame(payload, opcode=0x2)
+
+    def send_latest_binary(self, payload: bytes) -> bool:
+        if not self.alive:
+            return False
+        with self._cloud_condition:
+            self._pending_cloud_payload = payload
+            self._cloud_condition.notify()
+        return True
 
     def send_frame(self, payload: bytes, opcode: int) -> bool:
         if not self.alive:
@@ -80,10 +96,25 @@ class WebSocketClient:
             chunks.extend(chunk)
         return bytes(chunks)
 
+    def _cloud_send_loop(self) -> None:
+        while True:
+            with self._cloud_condition:
+                while self.alive and self._pending_cloud_payload is None:
+                    self._cloud_condition.wait()
+                if not self.alive and self._pending_cloud_payload is None:
+                    return
+                payload = self._pending_cloud_payload
+                self._pending_cloud_payload = None
+            if payload is not None and not self.send_binary(payload):
+                return
+
     def close(self) -> None:
         if not self.alive:
             return
         self.alive = False
+        with self._cloud_condition:
+            self._pending_cloud_payload = None
+            self._cloud_condition.notify_all()
         try:
             self.sock.close()
         except OSError:

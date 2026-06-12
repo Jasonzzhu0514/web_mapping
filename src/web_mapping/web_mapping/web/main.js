@@ -61,10 +61,10 @@ const ui = {
 const SOURCES = ['map', 'optimized', 'raw']
 const UNLIMITED_POINT_BUDGET = 10000000
 const DEFAULT_VISIBLE_SOURCES = new Set(['map', 'optimized', 'raw'])
-const ACCUMULATING_SOURCES = new Set(['map', 'optimized'])
+const ACCUMULATING_SOURCES = new Set(['optimized'])
 const SOURCE_LABELS = {
   map: '全局优化地图',
-  optimized: '当前建图帧',
+  optimized: '累计建图地图',
   raw: '雷达原始扫描',
 }
 
@@ -167,6 +167,7 @@ const state = {
   mapHistory: {
     loading: false,
     deleting: '',
+    previewing: '',
     stopPreviousLatest: null,
     stopStartedAt: 0,
     sessions: [],
@@ -434,7 +435,7 @@ function startMockStream() {
   updateMappingStatus(mockMappingSnapshot())
   const topicBySource = {
     raw: '/livox/lidar',
-    optimized: 'corrected_current_pcd',
+    optimized: '/web_mapping/current_frame',
     map: 'corrected_map',
   }
   let ticks = 0
@@ -651,6 +652,10 @@ function handleJson(payload) {
 
 function handleCloud(buffer) {
   if (!state.bridgeConnected) return
+  appendCloudPayload(buffer)
+}
+
+function appendCloudPayload(buffer) {
   const view = new DataView(buffer)
   const headerLength = view.getUint32(0, true)
   const dataOffset = view.getUint32(4, true)
@@ -670,28 +675,26 @@ function appendPoints(values, header) {
   const unlimited = !Number.isFinite(maxPoints)
   const shouldAccumulate = ACCUMULATING_SOURCES.has(source)
   const existingPoints = shouldAccumulate ? layer.pointCount : 0
-  const keepPoints = shouldAccumulate
-    ? unlimited
-      ? existingPoints
-      : Math.max(0, Math.min(existingPoints, maxPoints - incomingPoints))
-    : 0
-  const nextPoints = unlimited ? keepPoints + incomingPoints : Math.min(maxPoints, keepPoints + incomingPoints)
+  const combinedPoints = existingPoints + incomingPoints
+  const nextPoints = unlimited ? combinedPoints : Math.min(maxPoints, combinedPoints)
   const nextPositions = new Float32Array(nextPoints * 3)
   const nextColors = new Float32Array(nextPoints * 3)
-  if (keepPoints > 0) {
-    const oldStart = existingPoints - keepPoints
-    nextPositions.set(layer.positions.subarray(oldStart * 3, existingPoints * 3), 0)
-    nextColors.set(layer.colors.subarray(oldStart * 3, existingPoints * 3), 0)
+
+  const existingKeep = shouldAccumulate ? Math.min(existingPoints, Math.max(0, nextPoints - incomingPoints)) : 0
+  if (existingKeep > 0) {
+    const existingStart = existingPoints - existingKeep
+    nextPositions.set(layer.positions.subarray(existingStart * 3, existingPoints * 3), 0)
+    nextColors.set(layer.colors.subarray(existingStart * 3, existingPoints * 3), 0)
   }
 
-  const incomingStart = unlimited ? 0 : Math.max(0, incomingPoints - maxPoints)
+  const incomingCapacity = nextPoints - existingKeep
+  const incomingStart = Math.max(0, incomingPoints - incomingCapacity)
   const incomingKeep = incomingPoints - incomingStart
-  const incomingOffset = keepPoints * 3
   const range = header.intensity_range || layer.intensityRange || [0, 1]
   const hasIntensity = Boolean(header.has_intensity)
   for (let i = 0; i < incomingKeep; i += 1) {
     const sourceIndex = (incomingStart + i) * 4
-    const targetIndex = incomingOffset + i * 3
+    const targetIndex = (existingKeep + i) * 3
     nextPositions[targetIndex] = values[sourceIndex]
     nextPositions[targetIndex + 1] = values[sourceIndex + 1]
     nextPositions[targetIndex + 2] = values[sourceIndex + 2]
@@ -702,7 +705,9 @@ function appendPoints(values, header) {
   layer.colors = nextColors
   layer.pointCount = nextPoints
   layer.framePointCount = incomingPoints
-  layer.sourcePointCount = header.source_point_count || incomingPoints
+  layer.sourcePointCount = shouldAccumulate
+    ? (layer.sourcePointCount || 0) + (header.source_point_count || incomingPoints)
+    : (header.source_point_count || incomingPoints)
   layer.seq = header.seq || layer.seq + 1
   layer.topic = header.topic || '-'
   layer.bounds = header.bounds || layer.bounds
@@ -710,7 +715,7 @@ function appendPoints(values, header) {
   layer.hasIntensity = hasIntensity
   state.cloudSeq = Math.max(state.cloudSeq, layer.seq)
   state.latestFramePoints = incomingPoints
-  state.bounds = unionBounds(state.bounds, layer.bounds)
+  state.bounds = recomputeBounds()
   uploadLayer(layer)
   if (layer.pointCount > 0 && layer.bounds) {
     recenterCamera(layer.bounds, source)
@@ -722,8 +727,8 @@ function appendPoints(values, header) {
 
 function sourceBudget(source) {
   if (state.pointBudget >= UNLIMITED_POINT_BUDGET) return Number.POSITIVE_INFINITY
-  if (source === 'map') return Math.max(20000, Math.floor(state.pointBudget * 0.6))
-  if (source === 'optimized') return Math.max(15000, Math.floor(state.pointBudget * 0.3))
+  if (source === 'optimized') return Math.max(100000, Math.floor(state.pointBudget * 0.75))
+  if (source === 'map') return Math.max(20000, Math.floor(state.pointBudget * 0.2))
   return Math.max(10000, Math.floor(state.pointBudget * 0.1))
 }
 
@@ -820,6 +825,9 @@ function updateMappingCommandResult(payload) {
   if (payload.command === 'stop') {
     handleStopAccepted()
     return
+  }
+  if (payload.command === 'start') {
+    resetLiveMappingScene()
   }
   updateMappingMessage()
 }
@@ -1047,6 +1055,21 @@ function historySessionHtml(session) {
   const files = session.files || []
   const sessionId = session.id || session.name
   const deleting = state.mapHistory.deleting === sessionId
+  const previewFile = preferredPreviewFile(files)
+  const previewing = previewFile?.preview_url && state.mapHistory.previewing === previewFile.preview_url
+  const sessionPreviewButton = previewFile?.preview_url
+    ? `<button
+        class="history-icon-button history-session-preview"
+        type="button"
+        data-preview-url="${escapeAttr(previewFile.preview_url)}"
+        data-file-name="${escapeAttr(previewFile.name)}"
+        title="渲染点云"
+        aria-label="渲染点云"
+        ${previewing ? 'disabled' : ''}
+      >
+        <img src="./assets/play.png" alt="" aria-hidden="true" />
+      </button>`
+    : ''
   return `
     <details class="history-item">
       <summary class="history-item-head">
@@ -1056,6 +1079,7 @@ function historySessionHtml(session) {
           <em>${escapeHtml(session.modified_label || '')}</em>
         </span>
         <span class="history-actions">
+          ${sessionPreviewButton}
           <a class="history-icon-button history-archive-download" href="${escapeAttr(session.archive_url || '#')}" data-session-name="${escapeAttr(session.name)}" title="下载整份地图" aria-label="下载整份地图">
             <img src="./assets/download.png" alt="" aria-hidden="true" />
           </a>
@@ -1079,18 +1103,54 @@ function historySessionHtml(session) {
   `
 }
 
+function preferredPreviewFile(files) {
+  return files.find((file) => file.name.endsWith('_map.pcd') && file.preview_url)
+    || files.find((file) => file.preview_url)
+}
+
 function historyFileHtml(file) {
   return `
-    <a class="history-download" href="${escapeAttr(file.download_url)}" download>
-      <span class="history-download-icon" aria-hidden="true">
-        <img src="./assets/download.png" alt="" />
-      </span>
+    <div class="history-file-row">
       <span class="history-download-text">
         <strong>${mapFileLabel(file.name)}</strong>
         <em>${formatBytes(file.size)}</em>
       </span>
-    </a>
+      <span class="history-file-actions">
+        <a class="history-file-action history-download" href="${escapeAttr(file.download_url)}" download title="下载文件" aria-label="下载文件">
+          <img src="./assets/download.png" alt="" aria-hidden="true" />
+        </a>
+      </span>
+    </div>
   `
+}
+
+async function previewMapFile(previewUrl, fileName) {
+  if (!previewUrl || state.mapHistory.previewing) return
+  state.mapHistory.previewing = previewUrl
+  renderMapHistory({ sessions: state.mapHistory.sessions })
+  updateMappingMessage(`正在渲染${mapFileLabel(fileName)}`)
+  try {
+    const url = new URL(previewUrl, window.location.origin)
+    const previewBudget = sourceBudget('map')
+    url.searchParams.set('max_points', String(Number.isFinite(previewBudget) ? previewBudget : UNLIMITED_POINT_BUDGET))
+    const response = await fetch(url.toString(), { cache: 'no-store' })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const buffer = await response.arrayBuffer()
+    clearSourceLayer('map')
+    if (!state.visibleSources.has('map')) {
+      state.visibleSources.add('map')
+      syncLayerVisibility()
+      syncLayerButtons()
+    }
+    appendCloudPayload(buffer)
+    resetCameraView()
+    updateMappingMessage(`${mapFileLabel(fileName)}已渲染`)
+  } catch (error) {
+    updateMappingMessage('渲染历史地图失败')
+  } finally {
+    state.mapHistory.previewing = ''
+    renderMapHistory({ sessions: state.mapHistory.sessions })
+  }
 }
 
 async function deleteMapSession(sessionId, sessionName) {
@@ -1113,8 +1173,7 @@ async function deleteMapSession(sessionId, sessionName) {
 }
 
 function mapFileLabel(filename) {
-  if (filename === 'map_optimized.pcd') return '优化地图'
-  if (filename === 'map_raw.pcd') return '原始地图'
+  if (filename.endsWith('_map.pcd')) return '累计建图地图'
   if (filename === 'poses_tum.txt') return 'TUM 位姿'
   if (filename === 'poses_kitti.txt') return 'KITTI 位姿'
   if (filename === 'poses_matrix.txt') return '矩阵位姿'
@@ -1212,8 +1271,9 @@ function setLayerButtonStatus(source, stat) {
   const online = stateText === 'online'
   const selected = state.visibleSources.has(source)
   const hasCachedPoints = (state.layers[source]?.pointCount || 0) > 0
-  button.classList.toggle('is-available', online || hasCachedPoints)
-  button.classList.toggle('is-unavailable', !online && !hasCachedPoints)
+  button.classList.toggle('is-available', online)
+  button.classList.toggle('has-cache', hasCachedPoints)
+  button.classList.toggle('is-unavailable', !online)
   button.classList.toggle('is-standby', online && !selected)
   button.disabled = !online && !hasCachedPoints
   button.setAttribute('aria-disabled', String(button.disabled))
@@ -1371,20 +1431,48 @@ function syncLayerButtons() {
 
 function clearCloud() {
   for (const source of SOURCES) {
-    const layer = state.layers[source]
-    layer.positions = new Float32Array(0)
-    layer.colors = new Float32Array(0)
-    layer.pointCount = 0
-    layer.framePointCount = 0
-    layer.sourcePointCount = 0
-    layer.bounds = null
-    uploadLayer(layer)
+    clearSourceLayer(source)
   }
   state.bounds = null
   state.latestFramePoints = 0
   updatePointUi()
   updateMappingControls()
   updateMappingMessage()
+}
+
+function resetLiveMappingScene() {
+  for (const source of SOURCES) {
+    clearSourceLayer(source)
+  }
+  state.paths.raw = []
+  state.paths.optimized = []
+  updatePathObject('raw')
+  updatePathObject('optimized')
+  state.pose = null
+  if (poseMarker) poseMarker.visible = false
+  if (poseGeometry) {
+    poseGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3))
+    poseGeometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(0), 3))
+  }
+  state.bounds = null
+  state.latestFramePoints = 0
+  updatePointUi()
+  updateMappingControls()
+  updateMappingMessage()
+}
+
+function clearSourceLayer(source) {
+  const layer = state.layers[source]
+  if (!layer) return
+  layer.positions = new Float32Array(0)
+  layer.colors = new Float32Array(0)
+  layer.pointCount = 0
+  layer.framePointCount = 0
+  layer.sourcePointCount = 0
+  layer.bounds = null
+  uploadLayer(layer)
+  state.bounds = recomputeBounds()
+  state.latestFramePoints = 0
 }
 
 function recenterCamera(bounds, source) {
@@ -1538,6 +1626,13 @@ ui.startMapping.addEventListener('click', () => sendMappingCommand('start'))
 ui.stopMapping.addEventListener('click', () => sendMappingCommand('stop'))
 ui.refreshHistory.addEventListener('click', loadMapHistory)
 ui.historyList.addEventListener('click', (event) => {
+  const previewButton = event.target.closest('.history-session-preview')
+  if (previewButton) {
+    event.preventDefault()
+    event.stopPropagation()
+    previewMapFile(previewButton.dataset.previewUrl, previewButton.dataset.fileName || '')
+    return
+  }
   const deleteButton = event.target.closest('.history-delete')
   if (deleteButton) {
     event.preventDefault()
@@ -1587,6 +1682,16 @@ function unionBounds(a, b) {
       Math.max(a.max[2], b.max[2]),
     ],
   }
+}
+
+function recomputeBounds() {
+  let bounds = null
+  for (const source of SOURCES) {
+    const layer = state.layers[source]
+    if (!layer?.bounds || layer.pointCount <= 0) continue
+    bounds = unionBounds(bounds, layer.bounds)
+  }
+  return bounds
 }
 
 function boundsCenter(bounds) {

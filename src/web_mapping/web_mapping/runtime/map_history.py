@@ -11,10 +11,10 @@ from typing import Optional
 from urllib.parse import quote
 import zipfile
 
+from web_mapping.runtime.pcd_preview import build_pcd_preview_payload
+
 
 ALLOWED_MAP_FILENAMES = {
-    "map_optimized.pcd",
-    "map_raw.pcd",
     "poses_matrix.txt",
     "poses_kitti.txt",
     "poses_tum.txt",
@@ -27,6 +27,7 @@ class MapFile:
     size: int
     modified_at: float
     download_url: str
+    preview_url: str
 
 
 @dataclass(frozen=True)
@@ -71,7 +72,7 @@ class MapHistory:
         }
 
     def resolve_download(self, session_id: str, filename: str) -> Optional[Path]:
-        if filename not in ALLOWED_MAP_FILENAMES:
+        if not self._is_allowed_filename(filename):
             return None
         session_path = self._resolve_session_path(session_id)
         if session_path is None:
@@ -84,6 +85,22 @@ class MapHistory:
         if not candidate.is_file():
             return None
         return candidate
+
+    def resolve_preview(self, session_id: str, filename: str) -> Optional[Path]:
+        if not filename.endswith(".pcd"):
+            return None
+        return self.resolve_download(session_id, filename)
+
+    def make_preview_payload(self, session_id: str, filename: str, max_points: int = 1_000_000) -> Optional[bytes]:
+        path = self.resolve_preview(session_id, filename)
+        if path is None:
+            return None
+        return build_pcd_preview_payload(
+            path,
+            session_id=session_id,
+            filename=filename,
+            max_points=max_points,
+        )
 
     def make_session_archive(self, session_id: str) -> Optional[tuple[str, bytes]]:
         session_path = self._resolve_session_path(session_id)
@@ -130,7 +147,7 @@ class MapHistory:
 
     def _session_files(self, session_path: Path) -> list[MapFile]:
         files = []
-        for filename in sorted(ALLOWED_MAP_FILENAMES):
+        for filename in self._session_filenames(session_path):
             path = session_path / filename
             if not path.is_file():
                 continue
@@ -141,9 +158,24 @@ class MapHistory:
                     size=stat.st_size,
                     modified_at=stat.st_mtime,
                     download_url=self._download_url(session_path.name, filename),
+                    preview_url=self._preview_url(session_path.name, filename) if filename.endswith(".pcd") else "",
                 )
             )
         return files
+
+    def _session_filenames(self, session_path: Path) -> list[str]:
+        filenames = set(ALLOWED_MAP_FILENAMES)
+        for path in session_path.glob("*_map.pcd"):
+            if path.is_file() and self._is_allowed_filename(path.name):
+                filenames.add(path.name)
+        return sorted(filenames)
+
+    @staticmethod
+    def _is_allowed_filename(filename: str) -> bool:
+        path = Path(filename)
+        if path.name != filename:
+            return False
+        return filename in ALLOWED_MAP_FILENAMES or filename.endswith("_map.pcd")
 
     def _resolve_session_path(self, session_id: str) -> Optional[Path]:
         if not session_id or Path(session_id).name != session_id:
@@ -197,6 +229,10 @@ class MapHistory:
         return f"/api/maps/download?id={quote(session_id)}&file={quote(filename)}"
 
     @staticmethod
+    def _preview_url(session_id: str, filename: str) -> str:
+        return f"/api/maps/preview?id={quote(session_id)}&file={quote(filename)}"
+
+    @staticmethod
     def _archive_url(session_id: str) -> str:
         return f"/api/maps/download_session?id={quote(session_id)}"
 
@@ -220,6 +256,7 @@ class MapHistory:
                     "size": file.size,
                     "modified_at": file.modified_at,
                     "download_url": file.download_url,
+                    "preview_url": file.preview_url,
                 }
                 for file in session.files
             ],

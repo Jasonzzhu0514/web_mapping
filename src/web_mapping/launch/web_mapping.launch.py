@@ -22,7 +22,11 @@ def generate_launch_description():
     mapping_status_topic = LaunchConfiguration("mapping_status_topic")
     use_broker_backend = LaunchConfiguration("use_broker_backend")
     max_points_per_cloud = LaunchConfiguration("max_points_per_cloud")
+    max_raw_points_per_cloud = LaunchConfiguration("max_raw_points_per_cloud")
+    max_optimized_points_per_cloud = LaunchConfiguration("max_optimized_points_per_cloud")
+    max_map_points_per_cloud = LaunchConfiguration("max_map_points_per_cloud")
     min_cloud_interval_sec = LaunchConfiguration("min_cloud_interval_sec")
+    min_map_interval_sec = LaunchConfiguration("min_map_interval_sec")
     min_telemetry_interval_sec = LaunchConfiguration("min_telemetry_interval_sec")
     path_max_points = LaunchConfiguration("path_max_points")
     map_history_root = LaunchConfiguration("map_history_root")
@@ -41,7 +45,11 @@ def generate_launch_description():
         DeclareLaunchArgument("imu_topic", default_value=WEB_MAPPING_TOPICS["imu"]),
         DeclareLaunchArgument("lidar_status_topic", default_value=WEB_MAPPING_TOPICS["lidar_status"]),
         DeclareLaunchArgument("max_points_per_cloud", default_value="0"),
+        DeclareLaunchArgument("max_raw_points_per_cloud", default_value="5000"),
+        DeclareLaunchArgument("max_optimized_points_per_cloud", default_value="8000"),
+        DeclareLaunchArgument("max_map_points_per_cloud", default_value="50000"),
         DeclareLaunchArgument("min_cloud_interval_sec", default_value="0.15"),
+        DeclareLaunchArgument("min_map_interval_sec", default_value="0.5"),
         DeclareLaunchArgument("min_telemetry_interval_sec", default_value="0.1"),
         DeclareLaunchArgument("path_max_points", default_value="5000"),
         DeclareLaunchArgument("map_history_root", default_value=DEFAULT_MAP_HISTORY_ROOT),
@@ -70,7 +78,11 @@ def generate_launch_description():
                 "mapping_status_topic": mapping_status_topic,
                 "use_broker_backend": ParameterValue(use_broker_backend, value_type=bool),
                 "max_points_per_cloud": ParameterValue(max_points_per_cloud, value_type=int),
+                "max_raw_points_per_cloud": ParameterValue(max_raw_points_per_cloud, value_type=int),
+                "max_optimized_points_per_cloud": ParameterValue(max_optimized_points_per_cloud, value_type=int),
+                "max_map_points_per_cloud": ParameterValue(max_map_points_per_cloud, value_type=int),
                 "min_cloud_interval_sec": ParameterValue(min_cloud_interval_sec, value_type=float),
+                "min_map_interval_sec": ParameterValue(min_map_interval_sec, value_type=float),
                 "min_telemetry_interval_sec": ParameterValue(min_telemetry_interval_sec, value_type=float),
                 "path_max_points": ParameterValue(path_max_points, value_type=int),
                 "map_history_root": map_history_root,
