@@ -71,7 +71,7 @@ class MappingWebBridge(Node):
         self.lidar_status_topic = str(self.get_parameter("lidar_status_topic").value)
 
         self._lock = threading.Lock()
-        self._clients: set[WebSocketClient] = set()
+        self._websocket_clients: set[WebSocketClient] = set()
         self._last_cloud_sent_at = {source: 0.0 for source in VALID_SOURCES}
         self._last_telemetry_sent_at = {"pose": 0.0, "imu": 0.0, "path_raw": 0.0, "path_optimized": 0.0}
         self._pose: dict[str, Any] | None = None
@@ -203,12 +203,12 @@ class MappingWebBridge(Node):
 
     def add_client(self, client: WebSocketClient) -> None:
         with self._lock:
-            self._clients.add(client)
+            self._websocket_clients.add(client)
         self.get_logger().info(f"Web client connected: {client.address[0]}:{client.address[1]}")
 
     def remove_client(self, client: WebSocketClient) -> None:
         with self._lock:
-            self._clients.discard(client)
+            self._websocket_clients.discard(client)
 
     def handle_client_message(self, client: WebSocketClient, message: dict[str, Any]) -> None:
         if message.get("type") == "select_source":
@@ -245,7 +245,7 @@ class MappingWebBridge(Node):
     def make_status_payload(self, selected_source: str | None = None) -> dict[str, Any]:
         now = time.monotonic()
         with self._lock:
-            client_count = len(self._clients)
+            client_count = len(self._websocket_clients)
             pose = dict(self._pose) if self._pose else None
             imu = dict(self._imu) if self._imu else None
             lidar_status = self._lidar_status_text
@@ -508,11 +508,15 @@ class MappingWebBridge(Node):
 
     def _all_clients(self) -> list[WebSocketClient]:
         with self._lock:
-            return [client for client in self._clients if client.alive]
+            return [client for client in self._websocket_clients if client.alive]
 
     def _clients_for_source(self, source: str) -> list[WebSocketClient]:
         with self._lock:
-            return [client for client in self._clients if client.alive and source in client.selected_sources]
+            return [
+                client
+                for client in self._websocket_clients
+                if client.alive and source in client.selected_sources
+            ]
 
     def _lidar_state(self, now: float) -> str:
         raw_age = None

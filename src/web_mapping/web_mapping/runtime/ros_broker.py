@@ -41,4 +41,4 @@ class RosBrokerBackend(MappingBackend):
         msg = String()
         msg.data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         self._publisher.publish(msg)
-        return MappingBackendResult(True, message, {"seq": self._seq})
+        return MappingBackendResult(True, message, {"seq": self._seq, "async": True})

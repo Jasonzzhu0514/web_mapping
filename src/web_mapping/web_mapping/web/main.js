@@ -170,6 +170,7 @@ const state = {
     previewing: '',
     stopPreviousLatest: null,
     stopStartedAt: 0,
+    pendingStopRefresh: false,
     sessions: [],
   },
 }
@@ -537,7 +538,7 @@ function allowedMappingCommands(mappingState) {
   if (mappingState === 'stopped') return ['save', 'start']
   if (mappingState === 'idle' || mappingState === 'error') return ['start']
   if (mappingState === 'mapping') return ['stop']
-  if (mappingState === 'saving' || mappingState === 'starting') return ['stop']
+  if (mappingState === 'starting') return ['stop']
   return []
 }
 
@@ -819,11 +820,17 @@ function updateStatus(payload) {
 function updateMappingCommandResult(payload) {
   if (payload.mapping) updateMappingStatus(payload.mapping)
   if (!payload.accepted) {
+    if (payload.command === 'stop') {
+      state.mapHistory.pendingStopRefresh = false
+      state.mapHistory.stopPreviousLatest = null
+      state.mapHistory.stopStartedAt = 0
+    }
     updateMappingMessage(payload.message || '建图指令执行失败')
     return
   }
   if (payload.command === 'stop') {
-    handleStopAccepted()
+    state.mapHistory.pendingStopRefresh = true
+    updateMappingMessage('正在停止并保存地图')
     return
   }
   if (payload.command === 'start') {
@@ -834,6 +841,7 @@ function updateMappingCommandResult(payload) {
 
 function updateMappingStatus(mapping) {
   if (!mapping) return
+  const previousMappingState = state.mapping.state
   state.mapping = {
     ...state.mapping,
     state: mapping.state || state.mapping.state,
@@ -846,6 +854,13 @@ function updateMappingStatus(mapping) {
   setMappingStatePill(state.mapping.state)
   updateMappingControls()
   updateMappingMessage()
+  if (
+    state.mapHistory.pendingStopRefresh &&
+    previousMappingState !== 'stopped' &&
+    state.mapping.state === 'stopped'
+  ) {
+    handleStopCompleted()
+  }
 }
 
 function setMappingStatePill(stateText) {
@@ -897,9 +912,10 @@ function mappingProgressMessage() {
     if (hasRawScanPoints()) return '已收到雷达数据，正在生成地图'
     return '正在建图，地图持续更新中'
   }
-  if (mappingState === 'saving') return '正在保存地图'
-  if (mappingState === 'stopping') return '正在停止并保存地图'
+  if (mappingState === 'saving') return state.mapping.message || '正在保存地图'
+  if (mappingState === 'stopping') return state.mapping.message || '正在停止并保存地图'
   if (mappingState === 'stopped') {
+    if (state.mapping.message) return state.mapping.message
     if (hasSavableMapPoints()) return '建图已停止'
     if (hasRawScanPoints()) return '建图已停止，但还没有可保存的地图'
     return '建图已停止'
@@ -909,6 +925,7 @@ function mappingProgressMessage() {
 }
 
 function sendMappingCommand(command) {
+  if (!state.mockMode && ws?.readyState !== WebSocket.OPEN) return
   if (command === 'start') {
     updateMappingControls()
     updateMappingMessage('正在初始化，请稍等')
@@ -916,6 +933,10 @@ function sendMappingCommand(command) {
   if (command === 'stop') {
     state.mapHistory.stopPreviousLatest = state.mapHistory.sessions?.[0] || null
     state.mapHistory.stopStartedAt = Date.now() / 1000
+    state.mapHistory.pendingStopRefresh = true
+    state.mapping.state = 'stopping'
+    state.mapping.message = '正在停止并保存地图'
+    state.mapping.allowedCommands = []
     updateMappingControls()
     updateMappingMessage('正在停止并保存地图')
   }
@@ -929,7 +950,6 @@ function sendMappingCommand(command) {
     applyMockMappingCommand(payload)
     return
   }
-  if (ws?.readyState !== WebSocket.OPEN) return
   ws.send(JSON.stringify(payload))
 }
 
@@ -952,8 +972,8 @@ function applyMockMappingCommand(payload) {
     state.mapping.sessionName = payload.session_name
     state.mapping.saveDirectory = payload.save_directory
   } else if (command === 'stop') {
-    state.mapping.state = 'stopped'
-    state.mapping.message = '建图已停止'
+    state.mapping.state = 'stopping'
+    state.mapping.message = '正在停止并保存地图'
   }
   state.mapping.lastCommand = command
   updateMappingCommandResult({
@@ -985,12 +1005,13 @@ async function loadMapHistory() {
   }
 }
 
-async function handleStopAccepted() {
+async function handleStopCompleted() {
   const previousLatest = state.mapHistory.stopPreviousLatest || state.mapHistory.sessions?.[0]
   const startedAt = state.mapHistory.stopStartedAt
   state.mapHistory.stopPreviousLatest = null
   state.mapHistory.stopStartedAt = 0
-  updateMappingMessage('建图已停止，正在刷新历史地图')
+  state.mapHistory.pendingStopRefresh = false
+  updateMappingMessage('地图保存完成，正在刷新历史地图')
   const latest = await waitForSavedMap(previousLatest, startedAt)
   if (latest?.archive_url) {
     updateMappingMessage('地图已保存，历史地图已刷新')

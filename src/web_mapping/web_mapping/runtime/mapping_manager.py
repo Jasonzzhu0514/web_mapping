@@ -144,12 +144,12 @@ class MappingManager:
 
     def _stop(self, request: MappingCommandRequest) -> MappingCommandResult:
         with self._lock:
-            if self._state not in {"starting", "mapping", "saving"}:
+            if self._state not in {"starting", "mapping"}:
                 return self._reject_unlocked(request.command, f"当前不能停止建图")
             self._transition_unlocked("stopping", "正在请求停止建图")
         result = self._backend.stop(request)
         with self._lock:
-            next_state = "stopped" if result.accepted else "error"
+            next_state = "stopping" if result.accepted and _is_async_result(result) else "stopped" if result.accepted else "error"
             self._transition_unlocked(next_state, result.message, request.command, result)
             return self._result_unlocked(request.command, result.accepted, result.message, result.details)
 
@@ -162,7 +162,7 @@ class MappingManager:
             self._transition_unlocked("saving", "正在请求保存地图")
         result = self._backend.save(request)
         with self._lock:
-            next_state = "stopped" if result.accepted else "error"
+            next_state = "saving" if result.accepted and _is_async_result(result) else "stopped" if result.accepted else "error"
             self._transition_unlocked(next_state, result.message, request.command, result)
             return self._result_unlocked(request.command, result.accepted, result.message, result.details)
 
@@ -220,7 +220,7 @@ class MappingManager:
     def _allowed_commands_unlocked(self) -> set[str]:
         if self._state in {"idle", "stopped", "error"}:
             commands = {"start"}
-        elif self._state in {"starting", "mapping", "saving"}:
+        elif self._state in {"starting", "mapping"}:
             commands = {"stop"}
         else:
             commands = set()
@@ -229,3 +229,7 @@ class MappingManager:
         if self._state == "error":
             commands.add("reset_error")
         return commands
+
+
+def _is_async_result(result: MappingBackendResult) -> bool:
+    return bool((result.details or {}).get("async"))
