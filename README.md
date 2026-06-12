@@ -133,7 +133,7 @@ http://127.0.0.1:8765/?mock=1
 - `min_cloud_interval_sec`：非地图点云最小发送间隔，launch 默认 `0.15`
 - `min_telemetry_interval_sec`：状态/位姿/IMU 最小发送间隔，默认 `0.1`
 - `path_max_points`：轨迹最大下发点数，默认 `5000`
-- `map_history_root`：历史地图根目录，默认 `web_mapping/maps`
+- `map_history_root`：历史地图根目录，默认 `maps`
 - `map_history_limit`：历史地图列表最大数量，默认 `20`
 
 示例：
@@ -240,7 +240,7 @@ python3 tests/map_history_test.py
   "state": "mapping",
   "message": "正在建图",
   "session_name": "sequence_20260612_110000",
-  "map_history_root": "web_mapping/maps",
+  "map_history_root": "maps",
   "last_command": "start",
   "last_result": "accepted"
 }

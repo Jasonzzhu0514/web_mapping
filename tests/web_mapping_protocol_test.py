@@ -117,7 +117,7 @@ def test_web_mapping_broker_contract_topics_are_stable() -> None:
         "mapping_command": "/web_mapping/command",
         "mapping_status": "/web_mapping/status",
     }
-    assert DEFAULT_MAP_HISTORY_ROOT == "web_mapping/maps"
+    assert DEFAULT_MAP_HISTORY_ROOT == "maps"
 
 
 if __name__ == "__main__":

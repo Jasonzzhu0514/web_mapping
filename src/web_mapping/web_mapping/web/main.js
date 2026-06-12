@@ -50,7 +50,6 @@ const ui = {
   mappingSessionName: document.querySelector('#mappingSessionName'),
   startMapping: document.querySelector('#startMapping'),
   stopMapping: document.querySelector('#stopMapping'),
-  saveMapping: document.querySelector('#saveMapping'),
   historySummary: document.querySelector('#historySummary'),
   refreshHistory: document.querySelector('#refreshHistory'),
   historyList: document.querySelector('#historyList'),
@@ -123,6 +122,9 @@ const GIZMO_AXES = {
   width: 2,
 }
 
+const SAVE_DOWNLOAD_ATTEMPTS = 45
+const SAVE_DOWNLOAD_INTERVAL_MS = 1000
+
 const RAW_COLOR_STOPS = [
   [0.00, new THREE.Color(0x265dff)],
   [0.28, new THREE.Color(0x00d8ff)],
@@ -165,6 +167,8 @@ const state = {
   mapHistory: {
     loading: false,
     deleting: '',
+    stopPreviousLatest: null,
+    stopStartedAt: 0,
     sessions: [],
   },
 }
@@ -809,6 +813,14 @@ function updateStatus(payload) {
 
 function updateMappingCommandResult(payload) {
   if (payload.mapping) updateMappingStatus(payload.mapping)
+  if (!payload.accepted) {
+    updateMappingMessage(payload.message || '建图指令执行失败')
+    return
+  }
+  if (payload.command === 'stop') {
+    handleStopAccepted()
+    return
+  }
   updateMappingMessage()
 }
 
@@ -829,24 +841,17 @@ function updateMappingStatus(mapping) {
 }
 
 function setMappingStatePill(stateText) {
-  const next = mappingDisplayState(stateText || 'idle')
+  const next = stateText || 'idle'
   ui.mappingState.textContent = MAPPING_STATE_LABELS[next] || next
   ui.mappingState.classList.remove('is-online', 'is-stale', 'is-waiting', 'is-disconnected')
   ui.mappingState.classList.add(MAPPING_STATE_CLASS[next] || 'is-waiting')
 }
 
-function mappingDisplayState(stateText) {
-  if (stateText === 'mapping' && !hasRawScanPoints()) return 'waiting'
-  return stateText
-}
-
 function updateMappingControls() {
   const allowed = new Set(state.mapping.allowedCommands || [])
   const canSend = state.bridgeConnected || state.mockMode
-  const canSaveMap = allowed.has('save') && hasSavableMapPoints()
   ui.startMapping.disabled = !canSend || !allowed.has('start')
   ui.stopMapping.disabled = !canSend || !allowed.has('stop')
-  ui.saveMapping.disabled = !canSend || !canSaveMap
   ui.mappingSessionName.disabled = !canSend || !allowed.has('start')
 }
 
@@ -858,6 +863,12 @@ function hasRawScanPoints() {
   const rawLayer = state.layers.raw
   const rawStat = state.topicStats.raw || {}
   return (rawLayer?.pointCount || 0) > 0 || (rawStat.last_points || 0) > 0
+}
+
+function hasMappingOutputPoints() {
+  const optimizedStat = state.topicStats.optimized || {}
+  const mapStat = state.topicStats.map || {}
+  return hasSavableMapPoints() || (optimizedStat.last_points || 0) > 0 || (mapStat.last_points || 0) > 0
 }
 
 function updateMappingMessage(overrideText = '') {
@@ -874,14 +885,14 @@ function mappingProgressMessage() {
   if (mappingState === 'idle') return '等待开始'
   if (mappingState === 'starting') return '正在初始化，请稍等'
   if (mappingState === 'mapping') {
-    if (!hasRawScanPoints()) return '正在初始化，等待雷达数据'
-    if (!hasSavableMapPoints()) return '已收到雷达数据，正在生成地图'
+    if (hasMappingOutputPoints()) return '正在建图，地图持续更新中'
+    if (hasRawScanPoints()) return '已收到雷达数据，正在生成地图'
     return '正在建图，地图持续更新中'
   }
   if (mappingState === 'saving') return '正在保存地图'
-  if (mappingState === 'stopping') return '正在停止建图'
+  if (mappingState === 'stopping') return '正在停止并保存地图'
   if (mappingState === 'stopped') {
-    if (hasSavableMapPoints()) return '建图已停止，可以保存地图'
+    if (hasSavableMapPoints()) return '建图已停止'
     if (hasRawScanPoints()) return '建图已停止，但还没有可保存的地图'
     return '建图已停止'
   }
@@ -890,14 +901,16 @@ function mappingProgressMessage() {
 }
 
 function sendMappingCommand(command) {
-  if (command === 'save' && !hasSavableMapPoints()) {
-    updateMappingMessage('没有可保存的地图')
+  if (command === 'start') {
     updateMappingControls()
-    return
+    updateMappingMessage('正在初始化，请稍等')
   }
-  if (command === 'start') updateMappingMessage('正在初始化，请稍等')
-  if (command === 'stop') updateMappingMessage('正在停止建图')
-  if (command === 'save') updateMappingMessage('正在保存地图')
+  if (command === 'stop') {
+    state.mapHistory.stopPreviousLatest = state.mapHistory.sessions?.[0] || null
+    state.mapHistory.stopStartedAt = Date.now() / 1000
+    updateMappingControls()
+    updateMappingMessage('正在停止并保存地图')
+  }
   const payload = {
     type: 'mapping_command',
     command,
@@ -933,9 +946,6 @@ function applyMockMappingCommand(payload) {
   } else if (command === 'stop') {
     state.mapping.state = 'stopped'
     state.mapping.message = '建图已停止'
-  } else if (command === 'save') {
-    state.mapping.message = '已请求保存地图'
-    state.mapping.saveDirectory = payload.save_directory || state.mapping.saveDirectory
   }
   state.mapping.lastCommand = command
   updateMappingCommandResult({
@@ -967,6 +977,56 @@ async function loadMapHistory() {
   }
 }
 
+async function handleStopAccepted() {
+  const previousLatest = state.mapHistory.stopPreviousLatest || state.mapHistory.sessions?.[0]
+  const startedAt = state.mapHistory.stopStartedAt
+  state.mapHistory.stopPreviousLatest = null
+  state.mapHistory.stopStartedAt = 0
+  updateMappingMessage('建图已停止，正在刷新历史地图')
+  const latest = await waitForSavedMap(previousLatest, startedAt)
+  if (latest?.archive_url) {
+    updateMappingMessage('地图已保存，历史地图已刷新')
+    return
+  }
+  await loadMapHistory()
+  updateMappingMessage('建图已停止，未发现新的地图文件')
+}
+
+async function waitForSavedMap(previousLatest, minModifiedAt = 0) {
+  const previousId = previousLatest?.id || ''
+  const previousVersion = mapSessionVersion(previousLatest)
+  for (let attempt = 0; attempt < SAVE_DOWNLOAD_ATTEMPTS; attempt += 1) {
+    await loadMapHistory()
+    const latest = state.mapHistory.sessions?.[0]
+    if (isNewSavedMap(latest, previousId, previousVersion, minModifiedAt)) return latest
+    await sleep(SAVE_DOWNLOAD_INTERVAL_MS)
+  }
+  return null
+}
+
+function isNewSavedMap(session, previousId, previousVersion, minModifiedAt) {
+  if (!session?.archive_url) return false
+  const version = mapSessionVersion(session)
+  const updatedAfterCommand = !minModifiedAt || version >= minModifiedAt - 2
+  if (!updatedAfterCommand) return false
+  if (!previousId) return true
+  if (session.id !== previousId) return true
+  return version > previousVersion
+}
+
+function downloadMapArchive(session) {
+  if (!session?.archive_url) return
+  window.location.assign(session.archive_url)
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
+function mapSessionVersion(session) {
+  return Number(session?.modified_at || 0)
+}
+
 function renderMapHistory(payload) {
   const sessions = payload.sessions || state.mapHistory.sessions || []
   if (payload.loading) {
@@ -996,7 +1056,7 @@ function historySessionHtml(session) {
           <em>${escapeHtml(session.modified_label || '')}</em>
         </span>
         <span class="history-actions">
-          <a class="history-icon-button history-archive-download" href="${escapeAttr(session.archive_url || '#')}" download title="下载整份地图" aria-label="下载整份地图">
+          <a class="history-icon-button history-archive-download" href="${escapeAttr(session.archive_url || '#')}" data-session-name="${escapeAttr(session.name)}" title="下载整份地图" aria-label="下载整份地图">
             <img src="./assets/download.png" alt="" aria-hidden="true" />
           </a>
           <button
@@ -1043,6 +1103,7 @@ async function deleteMapSession(sessionId, sessionName) {
     const response = await fetch(`/api/maps/session?id=${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
     if (!response.ok) throw new Error('delete failed')
     await loadMapHistory()
+    updateMappingControls()
   } catch (error) {
     updateMappingMessage('删除失败，请稍后重试')
   } finally {
@@ -1151,8 +1212,8 @@ function setLayerButtonStatus(source, stat) {
   const online = stateText === 'online'
   const selected = state.visibleSources.has(source)
   const hasCachedPoints = (state.layers[source]?.pointCount || 0) > 0
-  button.classList.toggle('is-available', online)
-  button.classList.toggle('is-unavailable', !online)
+  button.classList.toggle('is-available', online || hasCachedPoints)
+  button.classList.toggle('is-unavailable', !online && !hasCachedPoints)
   button.classList.toggle('is-standby', online && !selected)
   button.disabled = !online && !hasCachedPoints
   button.setAttribute('aria-disabled', String(button.disabled))
@@ -1475,7 +1536,6 @@ ui.resetView.addEventListener('click', resetCameraView)
 ui.followPose.addEventListener('click', toggleFollowPose)
 ui.startMapping.addEventListener('click', () => sendMappingCommand('start'))
 ui.stopMapping.addEventListener('click', () => sendMappingCommand('stop'))
-ui.saveMapping.addEventListener('click', () => sendMappingCommand('save'))
 ui.refreshHistory.addEventListener('click', loadMapHistory)
 ui.historyList.addEventListener('click', (event) => {
   const deleteButton = event.target.closest('.history-delete')
@@ -1485,8 +1545,14 @@ ui.historyList.addEventListener('click', (event) => {
     deleteMapSession(deleteButton.dataset.sessionId, deleteButton.dataset.sessionName)
     return
   }
-  if (!event.target.closest('.history-archive-download')) return
+  const downloadLink = event.target.closest('.history-archive-download')
+  if (!downloadLink) return
+  event.preventDefault()
   event.stopPropagation()
+  downloadMapArchive({
+    archive_url: downloadLink.getAttribute('href'),
+    name: downloadLink.dataset.sessionName || '',
+  })
 })
 window.addEventListener('resize', resizeRenderer)
 
@@ -1590,6 +1656,7 @@ function vectorNorm(values) {
 }
 
 function startApp() {
+  document.querySelector('#saveMapping')?.remove()
   updateMappingControls()
   updateMappingMessage()
   try {

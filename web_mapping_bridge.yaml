@@ -7,7 +7,7 @@
     log_http_requests: false
     map_cloud_topic: /web_mapping/global_map
     map_history_limit: 20
-    map_history_root: web_mapping/maps
+    map_history_root: maps
     mapping_command_topic: /web_mapping/command
     mapping_status_topic: /web_mapping/status
     max_points_per_cloud: 0

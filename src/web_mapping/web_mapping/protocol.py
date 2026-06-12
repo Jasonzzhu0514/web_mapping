@@ -21,7 +21,7 @@ WEB_MAPPING_TOPICS = {
     "mapping_status": "/web_mapping/status",
 }
 
-DEFAULT_MAP_HISTORY_ROOT = "web_mapping/maps"
+DEFAULT_MAP_HISTORY_ROOT = "maps"
 
 SOURCE_LABELS = {
     "raw": "raw",

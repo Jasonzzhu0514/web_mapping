@@ -97,11 +97,10 @@ def test_map_history_project_relative_root() -> None:
     old_cwd = Path.cwd()
     try:
         os.chdir(project_root)
-        assert MapHistory("web_mapping/maps").root == expected
+        assert MapHistory("maps").root == expected
         os.chdir(project_root.parent)
-        assert MapHistory("web_mapping/maps").root == expected
+        assert MapHistory("maps").root == expected
         os.chdir(Path.home())
-        assert MapHistory("web_mapping/maps").root == expected
         assert MapHistory("maps").root == expected
     finally:
         os.chdir(old_cwd)

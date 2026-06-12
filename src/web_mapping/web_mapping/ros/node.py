@@ -108,7 +108,7 @@ class MappingWebBridge(Node):
                 LivoxCustomMsg,
                 self.livox_custom_topic,
                 lambda msg: self._livox_custom_callback("raw", msg),
-                reliable_qos,
+                sensor_qos,
             )
         else:
             if self.livox_custom_topic and LivoxCustomMsg is None:
