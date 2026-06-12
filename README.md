@@ -10,9 +10,9 @@
 
 当前主要图层和数据源：
 
-- 全局优化地图：累计地图点云 topic
-- 当前建图帧：当前帧或局部建图点云 topic
-- 雷达原始扫描：雷达实时点云 topic
+- 全局优化地图：默认订阅 `/web_mapping/global_map`
+- 当前建图帧：默认订阅 `/web_mapping/current_frame`
+- 雷达原始扫描：默认订阅 `/web_mapping/raw_cloud`
 - 轨迹、位姿、IMU、雷达状态和 topic 频率
 
 ## 功能
@@ -117,15 +117,18 @@ http://127.0.0.1:8765/?mock=1
 
 - `host`：HTTP/WebSocket 监听地址，默认 `0.0.0.0`
 - `port`：HTTP/WebSocket 端口，默认 `8765`
-- `raw_cloud_topic`：雷达原始点云 topic
+- `raw_cloud_topic`：雷达原始点云 topic，默认 `/web_mapping/raw_cloud`
 - `livox_custom_topic`：Livox CustomMsg 原始点云 topic；为空时使用 `raw_cloud_topic`
-- `optimized_cloud_topic`：当前建图帧 topic
-- `map_cloud_topic`：全局优化地图 topic
-- `pose_topic`：位姿 topic
-- `raw_path_topic`：原始轨迹 topic
-- `optimized_path_topic`：优化轨迹 topic
-- `imu_topic`：IMU topic
-- `lidar_status_topic`：雷达状态文本 topic，默认空；可设置为 `std_msgs/msg/String`
+- `optimized_cloud_topic`：当前建图帧 topic，默认 `/web_mapping/current_frame`
+- `map_cloud_topic`：全局优化地图 topic，默认 `/web_mapping/global_map`
+- `pose_topic`：位姿 topic，默认 `/web_mapping/pose`
+- `raw_path_topic`：原始轨迹 topic，默认 `/web_mapping/raw_path`
+- `optimized_path_topic`：优化轨迹 topic，默认 `/web_mapping/optimized_path`
+- `imu_topic`：IMU topic，默认 `/web_mapping/imu`
+- `lidar_status_topic`：雷达状态文本 topic，默认 `/web_mapping/lidar_status`
+- `mapping_command_topic`：Web 发给算法 broker 的建图命令 JSON topic，默认 `/web_mapping/command`
+- `mapping_status_topic`：算法 broker 发给 Web 的建图状态 JSON topic，默认 `/web_mapping/status`
+- `use_broker_backend`：是否通过 ROS broker topic 转发建图控制，默认 `true`
 - `max_points_per_cloud`：单帧点云最大采样点数，默认 `0`，表示不在桥接端采样
 - `min_cloud_interval_sec`：非地图点云最小发送间隔，launch 默认 `0.15`
 - `min_telemetry_interval_sec`：状态/位姿/IMU 最小发送间隔，默认 `0.1`
@@ -137,10 +140,10 @@ http://127.0.0.1:8765/?mock=1
 
 ```bash
 ros2 launch web_mapping web_mapping.launch.py \
-  raw_cloud_topic:=/points_raw \
-  optimized_cloud_topic:=/current_cloud \
-  map_cloud_topic:=/global_map \
-  pose_topic:=/pose
+  raw_cloud_topic:=/web_mapping/raw_cloud \
+  optimized_cloud_topic:=/web_mapping/current_frame \
+  map_cloud_topic:=/web_mapping/global_map \
+  pose_topic:=/web_mapping/pose
 ```
 
 也可以使用根目录的 `web_mapping_bridge.yaml` 作为运行配置参考。
@@ -177,7 +180,27 @@ python3 tests/map_history_test.py
 
 ## 建图控制接口
 
-当前版本已经提供 `mapping_manager` 壳子和前端建图卡片，但默认控制接口不会真正启动或停止建图。它的作用是先固定 Web 与控制层之间的接口，后续可以替换或扩展 manager backend 来接入具体建图程序。
+`web_mapping` 通过标准 ROS topic 与算法 broker 通信。Web 自己不关心具体 SLAM 算法，只消费 broker 对齐后的 topic、状态和地图目录。
+
+### Broker Topic Contract
+
+算法 broker 应发布：
+
+- `/web_mapping/raw_cloud`：`sensor_msgs/msg/PointCloud2`
+- `/web_mapping/current_frame`：`sensor_msgs/msg/PointCloud2`
+- `/web_mapping/global_map`：`sensor_msgs/msg/PointCloud2`
+- `/web_mapping/pose`：`geometry_msgs/msg/PoseStamped`
+- `/web_mapping/raw_path`：`nav_msgs/msg/Path`
+- `/web_mapping/optimized_path`：`nav_msgs/msg/Path`
+- `/web_mapping/imu`：`sensor_msgs/msg/Imu`
+- `/web_mapping/lidar_status`：`std_msgs/msg/String`
+- `/web_mapping/status`：`std_msgs/msg/String`，内容为 JSON
+
+算法 broker 应订阅：
+
+- `/web_mapping/command`：`std_msgs/msg/String`，内容为 JSON
+
+命令 JSON：
 
 浏览器发送：
 
@@ -190,7 +213,7 @@ python3 tests/map_history_test.py
 }
 ```
 
-界面里的“地图名称”对应协议里的 `session_name`。`save_directory` 保留给后续真实后端使用，当前界面不向用户暴露保存路径，默认交给后端配置决定。
+界面里的“地图名称”对应协议里的 `session_name`。`save_directory` 默认不向用户暴露，通常由算法 broker 自己决定。
 
 支持的 `command`：
 
@@ -209,7 +232,21 @@ python3 tests/map_history_test.py
 - `stopped`：已停止，允许保存当前会话
 - `error`：控制接口错误
 
-后端会在普通 `status` 消息中附带 `mapping` 字段，也会在命令后返回 `mapping_command_result` 并广播 `mapping_status`。真实接入时建议让 backend 负责进程生命周期、保存调用和错误信息归一化，Web 前端保持只消费状态机。
+状态 JSON：
+
+```json
+{
+  "type": "mapping_status",
+  "state": "mapping",
+  "message": "正在建图",
+  "session_name": "sequence_20260612_110000",
+  "map_history_root": "web_mapping/maps",
+  "last_command": "start",
+  "last_result": "accepted"
+}
+```
+
+`map_history_root` 由算法 broker 暴露，指向该 SLAM 算法真实保存地图的路径。`web_mapping` 自带的 `map_history_root` 只是没有 broker 时的默认值。
 
 ## 历史地图下载
 

@@ -1,20 +1,23 @@
 /web_mapping_bridge:
   ros__parameters:
     host: 0.0.0.0
-    imu_topic: /livox/imu
-    lidar_status_topic: ''
-    livox_custom_topic: /livox/lidar
+    imu_topic: /web_mapping/imu
+    lidar_status_topic: /web_mapping/lidar_status
+    livox_custom_topic: ''
     log_http_requests: false
-    map_cloud_topic: corrected_map
+    map_cloud_topic: /web_mapping/global_map
     map_history_limit: 20
     map_history_root: web_mapping/maps
+    mapping_command_topic: /web_mapping/command
+    mapping_status_topic: /web_mapping/status
     max_points_per_cloud: 0
     min_cloud_interval_sec: 0.08
-    optimized_cloud_topic: corrected_current_pcd
-    optimized_path_topic: corrected_path
+    optimized_cloud_topic: /web_mapping/current_frame
+    optimized_path_topic: /web_mapping/optimized_path
     path_max_points: 5000
     port: 8765
-    pose_topic: pose_stamped
-    raw_cloud_topic: cloud_registered_1
-    raw_path_topic: ori_path
+    pose_topic: /web_mapping/pose
+    raw_cloud_topic: /web_mapping/raw_cloud
+    raw_path_topic: /web_mapping/raw_path
+    use_broker_backend: true
     use_sim_time: false

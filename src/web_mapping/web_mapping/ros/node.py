@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import json
 import math
-from pathlib import Path
 import threading
 import time
 from http.server import ThreadingHTTPServer
@@ -22,9 +22,10 @@ from web_mapping.pointcloud.codec import (
     make_binary_cloud_payload,
     stamp_to_float,
 )
-from web_mapping.protocol import SOURCE_LABELS, VALID_SOURCES
+from web_mapping.protocol import DEFAULT_MAP_HISTORY_ROOT, WEB_MAPPING_TOPICS, VALID_SOURCES
 from web_mapping.runtime.map_history import MapHistory
 from web_mapping.runtime.mapping_manager import MappingManager
+from web_mapping.runtime.ros_broker import RosBrokerBackend
 from web_mapping.runtime.stats import TopicStats
 from web_mapping.transport.http_server import create_http_server
 from web_mapping.transport.websocket import WebSocketClient
@@ -48,6 +49,9 @@ class MappingWebBridge(Node):
         self.path_max_points = int(self.get_parameter("path_max_points").value)
         self.map_history_root = str(self.get_parameter("map_history_root").value)
         self.map_history_limit = int(self.get_parameter("map_history_limit").value)
+        self.mapping_command_topic = str(self.get_parameter("mapping_command_topic").value)
+        self.mapping_status_topic = str(self.get_parameter("mapping_status_topic").value)
+        self.use_broker_backend = bool(self.get_parameter("use_broker_backend").value)
         self.log_http_requests = bool(self.get_parameter("log_http_requests").value)
 
         self.raw_cloud_topic = str(self.get_parameter("raw_cloud_topic").value)
@@ -68,7 +72,6 @@ class MappingWebBridge(Node):
         self._imu: dict[str, Any] | None = None
         self._lidar_status_text = ""
         self._seq = 0
-        self.mapping_manager = MappingManager()
         self.map_history = MapHistory(self.map_history_root, self.map_history_limit)
 
         self.stats = {
@@ -88,8 +91,17 @@ class MappingWebBridge(Node):
         map_qos.reliability = ReliabilityPolicy.RELIABLE
         map_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
         reliable_qos = QoSProfile(depth=10)
+        status_qos = QoSProfile(depth=1)
+        status_qos.reliability = ReliabilityPolicy.RELIABLE
+        status_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
         sensor_qos = QoSProfile(depth=50)
         sensor_qos.reliability = ReliabilityPolicy.BEST_EFFORT
+        self.mapping_command_pub = None
+        if self.use_broker_backend and self.mapping_command_topic:
+            self.mapping_command_pub = self.create_publisher(String, self.mapping_command_topic, reliable_qos)
+            self.mapping_manager = MappingManager(RosBrokerBackend(self.mapping_command_pub))
+        else:
+            self.mapping_manager = MappingManager()
 
         if self.livox_custom_topic and LivoxCustomMsg is not None:
             self.create_subscription(
@@ -129,7 +141,9 @@ class MappingWebBridge(Node):
         if self.imu_topic:
             self.create_subscription(Imu, self.imu_topic, self._imu_callback, sensor_qos)
         if self.lidar_status_topic:
-            self.create_subscription(String, self.lidar_status_topic, self._lidar_status_callback, reliable_qos)
+            self.create_subscription(String, self.lidar_status_topic, self._lidar_status_callback, status_qos)
+        if self.mapping_status_topic:
+            self.create_subscription(String, self.mapping_status_topic, self._mapping_status_callback, status_qos)
 
         self._status_timer = self.create_timer(1.0, self._broadcast_status)
         self._httpd = self._start_http_server()
@@ -146,21 +160,24 @@ class MappingWebBridge(Node):
     def _declare_parameters(self) -> None:
         self.declare_parameter("host", "0.0.0.0")
         self.declare_parameter("port", 8765)
-        self.declare_parameter("raw_cloud_topic", "cloud_registered_1")
-        self.declare_parameter("livox_custom_topic", "/livox/lidar")
-        self.declare_parameter("optimized_cloud_topic", "corrected_current_pcd")
-        self.declare_parameter("map_cloud_topic", "corrected_map")
-        self.declare_parameter("pose_topic", "pose_stamped")
-        self.declare_parameter("raw_path_topic", "ori_path")
-        self.declare_parameter("optimized_path_topic", "corrected_path")
-        self.declare_parameter("imu_topic", "/livox/imu")
-        self.declare_parameter("lidar_status_topic", "")
+        self.declare_parameter("raw_cloud_topic", WEB_MAPPING_TOPICS["raw_cloud"])
+        self.declare_parameter("livox_custom_topic", "")
+        self.declare_parameter("optimized_cloud_topic", WEB_MAPPING_TOPICS["current_frame"])
+        self.declare_parameter("map_cloud_topic", WEB_MAPPING_TOPICS["global_map"])
+        self.declare_parameter("pose_topic", WEB_MAPPING_TOPICS["pose"])
+        self.declare_parameter("raw_path_topic", WEB_MAPPING_TOPICS["raw_path"])
+        self.declare_parameter("optimized_path_topic", WEB_MAPPING_TOPICS["optimized_path"])
+        self.declare_parameter("imu_topic", WEB_MAPPING_TOPICS["imu"])
+        self.declare_parameter("lidar_status_topic", WEB_MAPPING_TOPICS["lidar_status"])
         self.declare_parameter("max_points_per_cloud", 0)
         self.declare_parameter("min_cloud_interval_sec", 0.08)
         self.declare_parameter("min_telemetry_interval_sec", 0.1)
         self.declare_parameter("path_max_points", 5000)
-        self.declare_parameter("map_history_root", "web_mapping/maps")
+        self.declare_parameter("map_history_root", DEFAULT_MAP_HISTORY_ROOT)
         self.declare_parameter("map_history_limit", 20)
+        self.declare_parameter("mapping_command_topic", WEB_MAPPING_TOPICS["mapping_command"])
+        self.declare_parameter("mapping_status_topic", WEB_MAPPING_TOPICS["mapping_status"])
+        self.declare_parameter("use_broker_backend", True)
         self.declare_parameter("log_http_requests", False)
 
     def host_for_display(self) -> str:
@@ -431,6 +448,21 @@ class MappingWebBridge(Node):
         with self._lock:
             self._lidar_status_text = msg.data
         self.stats["lidar_status"].record(1, 1, None)
+
+    def _mapping_status_callback(self, msg: String) -> None:
+        try:
+            payload = json.loads(msg.data)
+        except json.JSONDecodeError:
+            self.get_logger().warning("Ignoring invalid mapping status JSON from broker")
+            return
+        if not isinstance(payload, dict):
+            return
+        map_history_root = str(payload.get("map_history_root", "")).strip()
+        if map_history_root and map_history_root != self.map_history_root:
+            self.map_history_root = map_history_root
+            self.map_history = MapHistory(self.map_history_root, self.map_history_limit)
+        self.mapping_manager.apply_status(payload)
+        self._broadcast_mapping_status()
 
     def _broadcast_status(self) -> None:
         clients = self._all_clients()

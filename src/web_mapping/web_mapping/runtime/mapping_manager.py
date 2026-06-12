@@ -88,6 +88,29 @@ class MappingManager:
                 "states": sorted(VALID_MAPPING_STATES),
             }
 
+    def apply_status(self, payload: dict[str, Any]) -> None:
+        with self._lock:
+            state = str(payload.get("state", self._state)).strip() or self._state
+            if state in VALID_MAPPING_STATES:
+                self._state = state
+            message = str(payload.get("message", "")).strip()
+            if message:
+                self._message = message
+            session_name = str(payload.get("session_name", "")).strip()
+            if session_name:
+                self._session_name = session_name
+            save_directory = str(payload.get("save_directory", "")).strip()
+            if save_directory:
+                self._save_directory = save_directory
+            last_command = str(payload.get("last_command", "")).strip()
+            if last_command:
+                self._last_command = last_command
+            last_result = str(payload.get("last_result", "")).strip()
+            if last_result:
+                self._last_result = last_result
+            self._seq += 1
+            self._updated_at = time.time()
+
     def handle_command(self, command: str, payload: Optional[dict[str, Any]] = None) -> MappingCommandResult:
         normalized = command.strip()
         if normalized not in VALID_MAPPING_COMMANDS:

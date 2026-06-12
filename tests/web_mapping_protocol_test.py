@@ -17,7 +17,14 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src" / "web_mapping"))
 
-from web_mapping.protocol import DEFAULT_SOURCES, VALID_MAPPING_COMMANDS, VALID_MAPPING_STATES, VALID_SOURCES  # noqa: E402
+from web_mapping.protocol import (  # noqa: E402
+    DEFAULT_MAP_HISTORY_ROOT,
+    DEFAULT_SOURCES,
+    VALID_MAPPING_COMMANDS,
+    VALID_MAPPING_STATES,
+    VALID_SOURCES,
+    WEB_MAPPING_TOPICS,
+)
 from web_mapping.runtime.mapping_manager import MappingManager  # noqa: E402
 
 
@@ -95,9 +102,26 @@ def test_mapping_protocol_commands_are_explicit() -> None:
     assert VALID_MAPPING_COMMANDS == {"start", "stop", "save", "reset_error"}
 
 
+def test_web_mapping_broker_contract_topics_are_stable() -> None:
+    assert WEB_MAPPING_TOPICS == {
+        "raw_cloud": "/web_mapping/raw_cloud",
+        "current_frame": "/web_mapping/current_frame",
+        "global_map": "/web_mapping/global_map",
+        "pose": "/web_mapping/pose",
+        "raw_path": "/web_mapping/raw_path",
+        "optimized_path": "/web_mapping/optimized_path",
+        "imu": "/web_mapping/imu",
+        "lidar_status": "/web_mapping/lidar_status",
+        "mapping_command": "/web_mapping/command",
+        "mapping_status": "/web_mapping/status",
+    }
+    assert DEFAULT_MAP_HISTORY_ROOT == "web_mapping/maps"
+
+
 if __name__ == "__main__":
     test_binary_cloud_payload_contract()
     test_default_sources_keep_hidden_layers_streaming()
     test_mapping_control_state_machine_shell()
     test_mapping_protocol_commands_are_explicit()
+    test_web_mapping_broker_contract_topics_are_stable()
     print("web mapping protocol ok")
