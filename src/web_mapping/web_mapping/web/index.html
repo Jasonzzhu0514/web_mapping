@@ -96,6 +96,53 @@
         </section>
 
         <aside class="side-panel">
+          <section class="panel-section mapping-control-section">
+            <button class="section-toggle" type="button" aria-expanded="true">
+              <span>建图</span>
+              <span class="section-chevron" aria-hidden="true"></span>
+            </button>
+            <div class="section-content mapping-control">
+              <div class="mapping-subcard">
+                <div class="mapping-subcard-title">
+                  <span>当前建图</span>
+                </div>
+                <div class="mapping-state-card">
+                  <div>
+                    <span>状态</span>
+                    <strong id="mappingState" class="state-pill is-waiting">ready</strong>
+                  </div>
+                  <p id="mappingMessage">等待开始</p>
+                </div>
+                <div class="mapping-form">
+                  <label for="mappingSessionName">
+                    <span>地图名称</span>
+                    <input id="mappingSessionName" type="text" placeholder="留空自动命名" autocomplete="off" disabled />
+                  </label>
+                </div>
+                <div class="mapping-actions">
+                  <button id="startMapping" class="mapping-action is-primary" type="button" disabled>开始建图</button>
+                  <button id="stopMapping" class="mapping-action" type="button" disabled>停止建图</button>
+                  <button id="saveMapping" class="mapping-action" type="button" disabled>保存地图</button>
+                </div>
+              </div>
+
+              <div class="mapping-subcard">
+                <div class="mapping-subcard-title">
+                  <span>历史地图</span>
+                  <button id="refreshHistory" class="history-refresh" type="button">刷新</button>
+                </div>
+                <div class="map-history">
+                  <div class="history-head">
+                    <span id="historySummary">暂无历史地图</span>
+                  </div>
+                  <div id="historyList" class="history-list">
+                    <p class="history-empty">等待读取</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
           <section class="panel-section">
             <button class="section-toggle" type="button" aria-expanded="true">
               <span>传感器详情</span>

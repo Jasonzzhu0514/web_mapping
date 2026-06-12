@@ -6,6 +6,8 @@
     livox_custom_topic: /livox/lidar
     log_http_requests: false
     map_cloud_topic: corrected_map
+    map_history_limit: 20
+    map_history_root: web_mapping/maps
     max_points_per_cloud: 0
     min_cloud_interval_sec: 0.08
     optimized_cloud_topic: corrected_current_pcd

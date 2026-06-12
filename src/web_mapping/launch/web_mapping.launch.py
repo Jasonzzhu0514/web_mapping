@@ -21,6 +21,8 @@ def generate_launch_description():
     min_cloud_interval_sec = LaunchConfiguration("min_cloud_interval_sec")
     min_telemetry_interval_sec = LaunchConfiguration("min_telemetry_interval_sec")
     path_max_points = LaunchConfiguration("path_max_points")
+    map_history_root = LaunchConfiguration("map_history_root")
+    map_history_limit = LaunchConfiguration("map_history_limit")
 
     return LaunchDescription([
         DeclareLaunchArgument("host", default_value="0.0.0.0"),
@@ -38,6 +40,8 @@ def generate_launch_description():
         DeclareLaunchArgument("min_cloud_interval_sec", default_value="0.15"),
         DeclareLaunchArgument("min_telemetry_interval_sec", default_value="0.1"),
         DeclareLaunchArgument("path_max_points", default_value="5000"),
+        DeclareLaunchArgument("map_history_root", default_value="web_mapping/maps"),
+        DeclareLaunchArgument("map_history_limit", default_value="20"),
         Node(
             package="web_mapping",
             executable="web_mapping_bridge",
@@ -59,6 +63,8 @@ def generate_launch_description():
                 "min_cloud_interval_sec": ParameterValue(min_cloud_interval_sec, value_type=float),
                 "min_telemetry_interval_sec": ParameterValue(min_telemetry_interval_sec, value_type=float),
                 "path_max_points": ParameterValue(path_max_points, value_type=int),
+                "map_history_root": map_history_root,
+                "map_history_limit": ParameterValue(map_history_limit, value_type=int),
             }],
         ),
     ])

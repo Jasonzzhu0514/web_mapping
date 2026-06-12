@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 import threading
 import time
 from http.server import ThreadingHTTPServer
@@ -22,6 +23,8 @@ from web_mapping.pointcloud.codec import (
     stamp_to_float,
 )
 from web_mapping.protocol import SOURCE_LABELS, VALID_SOURCES
+from web_mapping.runtime.map_history import MapHistory
+from web_mapping.runtime.mapping_manager import MappingManager
 from web_mapping.runtime.stats import TopicStats
 from web_mapping.transport.http_server import create_http_server
 from web_mapping.transport.websocket import WebSocketClient
@@ -43,6 +46,8 @@ class MappingWebBridge(Node):
         self.min_cloud_interval_sec = float(self.get_parameter("min_cloud_interval_sec").value)
         self.min_telemetry_interval_sec = float(self.get_parameter("min_telemetry_interval_sec").value)
         self.path_max_points = int(self.get_parameter("path_max_points").value)
+        self.map_history_root = str(self.get_parameter("map_history_root").value)
+        self.map_history_limit = int(self.get_parameter("map_history_limit").value)
         self.log_http_requests = bool(self.get_parameter("log_http_requests").value)
 
         self.raw_cloud_topic = str(self.get_parameter("raw_cloud_topic").value)
@@ -63,6 +68,8 @@ class MappingWebBridge(Node):
         self._imu: dict[str, Any] | None = None
         self._lidar_status_text = ""
         self._seq = 0
+        self.mapping_manager = MappingManager()
+        self.map_history = MapHistory(self.map_history_root, self.map_history_limit)
 
         self.stats = {
             "raw": TopicStats(self.livox_custom_topic or self.raw_cloud_topic),
@@ -152,6 +159,8 @@ class MappingWebBridge(Node):
         self.declare_parameter("min_cloud_interval_sec", 0.08)
         self.declare_parameter("min_telemetry_interval_sec", 0.1)
         self.declare_parameter("path_max_points", 5000)
+        self.declare_parameter("map_history_root", "web_mapping/maps")
+        self.declare_parameter("map_history_limit", 20)
         self.declare_parameter("log_http_requests", False)
 
     def host_for_display(self) -> str:
@@ -185,6 +194,20 @@ class MappingWebBridge(Node):
             client.selected_source = next(iter(sources), "")
             client.send_json({"type": "selected_sources", "selected_sources": sorted(sources)})
             client.send_json(self.make_status_payload(client.selected_source or None))
+        elif message.get("type") == "mapping_command":
+            command = str(message.get("command", "")).strip()
+            result = self.mapping_manager.handle_command(command, message)
+            payload = {
+                "type": "mapping_command_result",
+                "command": result.command,
+                "accepted": result.accepted,
+                "state": result.state,
+                "message": result.message,
+                "details": result.details or {},
+                "mapping": self.mapping_manager.snapshot(),
+            }
+            client.send_json(payload)
+            self._broadcast_mapping_status()
 
     def make_status_payload(self, selected_source: str | None = None) -> dict[str, Any]:
         now = time.monotonic()
@@ -204,6 +227,7 @@ class MappingWebBridge(Node):
                 "raw_topic": self.stats["raw"].topic,
             },
             "topics": {name: stat.snapshot(now) for name, stat in self.stats.items() if stat.topic},
+            "mapping": self.mapping_manager.snapshot(),
             "pose": pose,
             "imu": imu,
         }
@@ -412,6 +436,13 @@ class MappingWebBridge(Node):
         clients = self._all_clients()
         for client in clients:
             client.send_json(self.make_status_payload(client.selected_source))
+
+    def _broadcast_mapping_status(self) -> None:
+        payload = {
+            "type": "mapping_status",
+            "mapping": self.mapping_manager.snapshot(),
+        }
+        self._broadcast_json(payload)
 
     def _broadcast_json(self, payload: dict[str, Any]) -> None:
         for client in self._all_clients():

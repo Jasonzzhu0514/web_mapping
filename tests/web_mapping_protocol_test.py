@@ -17,7 +17,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src" / "web_mapping"))
 
-from web_mapping.protocol import DEFAULT_SOURCES, VALID_SOURCES  # noqa: E402
+from web_mapping.protocol import DEFAULT_SOURCES, VALID_MAPPING_COMMANDS, VALID_MAPPING_STATES, VALID_SOURCES  # noqa: E402
+from web_mapping.runtime.mapping_manager import MappingManager  # noqa: E402
 
 
 def make_binary_cloud_payload(header: dict, values: array) -> bytes:
@@ -63,7 +64,40 @@ def test_default_sources_keep_hidden_layers_streaming() -> None:
     assert set(DEFAULT_SOURCES) == VALID_SOURCES
 
 
+def test_mapping_control_state_machine_shell() -> None:
+    manager = MappingManager()
+
+    initial = manager.snapshot()
+    assert initial["state"] == "idle"
+    assert "start" in initial["allowed_commands"]
+    assert set(initial["states"]) == VALID_MAPPING_STATES
+
+    start_result = manager.handle_command("start", {"session_name": "demo"})
+    assert start_result.accepted
+    assert start_result.state == "mapping"
+    assert "save" not in manager.snapshot()["allowed_commands"]
+
+    save_while_mapping_result = manager.handle_command("save", {"save_directory": "/tmp/maps"})
+    assert not save_while_mapping_result.accepted
+    assert save_while_mapping_result.state == "mapping"
+
+    stop_result = manager.handle_command("stop", {})
+    assert stop_result.accepted
+    assert stop_result.state == "stopped"
+    assert "save" in manager.snapshot()["allowed_commands"]
+
+    save_after_stop_result = manager.handle_command("save", {})
+    assert save_after_stop_result.accepted
+    assert save_after_stop_result.state == "stopped"
+
+
+def test_mapping_protocol_commands_are_explicit() -> None:
+    assert VALID_MAPPING_COMMANDS == {"start", "stop", "save", "reset_error"}
+
+
 if __name__ == "__main__":
     test_binary_cloud_payload_contract()
     test_default_sources_keep_hidden_layers_streaming()
+    test_mapping_control_state_machine_shell()
+    test_mapping_protocol_commands_are_explicit()
     print("web mapping protocol ok")

@@ -45,6 +45,15 @@ const ui = {
   layerSettingsPopover: document.querySelector('#layerSettingsPopover'),
   resetView: document.querySelector('#resetView'),
   followPose: document.querySelector('#followPose'),
+  mappingState: document.querySelector('#mappingState'),
+  mappingMessage: document.querySelector('#mappingMessage'),
+  mappingSessionName: document.querySelector('#mappingSessionName'),
+  startMapping: document.querySelector('#startMapping'),
+  stopMapping: document.querySelector('#stopMapping'),
+  saveMapping: document.querySelector('#saveMapping'),
+  historySummary: document.querySelector('#historySummary'),
+  refreshHistory: document.querySelector('#refreshHistory'),
+  historyList: document.querySelector('#historyList'),
   layerToggles: Array.from(document.querySelectorAll('.layer-toggle')),
   sectionToggles: Array.from(document.querySelectorAll('.section-toggle')),
   backendTopicRows: Array.from(document.querySelectorAll('.topic-row')),
@@ -58,6 +67,28 @@ const SOURCE_LABELS = {
   map: '全局优化地图',
   optimized: '当前建图帧',
   raw: '雷达原始扫描',
+}
+
+const MAPPING_STATE_LABELS = {
+  idle: 'ready',
+  starting: 'starting',
+  waiting: 'waiting',
+  mapping: 'mapping',
+  saving: 'saving',
+  stopping: 'stopping',
+  stopped: 'stopped',
+  error: 'error',
+}
+
+const MAPPING_STATE_CLASS = {
+  idle: 'is-waiting',
+  starting: 'is-waiting',
+  waiting: 'is-waiting',
+  mapping: 'is-online',
+  saving: 'is-waiting',
+  stopping: 'is-waiting',
+  stopped: 'is-stale',
+  error: 'is-disconnected',
 }
 
 const SCENE = {
@@ -123,6 +154,19 @@ const state = {
   reconnectTimer: null,
   mockTimer: null,
   mockStartTime: performance.now(),
+  mapping: {
+    state: 'idle',
+    message: '等待开始',
+    allowedCommands: ['start'],
+    backend: { name: 'stub', available: false },
+    lastCommand: '',
+  },
+  topicStats: {},
+  mapHistory: {
+    loading: false,
+    deleting: '',
+    sessions: [],
+  },
 }
 
 let ws = null
@@ -383,6 +427,7 @@ function requestAllSources() {
 function startMockStream() {
   setConnectionState('mock')
   setConnectionPill(connectionStateFromHealth('online'))
+  updateMappingStatus(mockMappingSnapshot())
   const topicBySource = {
     raw: '/livox/lidar',
     optimized: 'corrected_current_pcd',
@@ -454,6 +499,7 @@ function startMockStream() {
         pose: mockTopic('pose', 'pose_stamped', 10),
         imu: mockTopic('imu', '/livox/imu', 100),
       },
+      mapping: mockMappingSnapshot(),
     })
   }, 100)
 }
@@ -468,6 +514,26 @@ function mockTopic(source, topic, hz) {
     last_points: layer?.sourcePointCount || 1,
     last_sampled_points: layer?.framePointCount || 1,
   }
+}
+
+function mockMappingSnapshot() {
+  return {
+    state: state.mapping.state,
+    message: state.mapping.message,
+    session_name: state.mapping.sessionName || '',
+    save_directory: state.mapping.saveDirectory || '',
+    last_command: state.mapping.lastCommand || '',
+    backend: { name: 'mock', available: true },
+    allowed_commands: allowedMappingCommands(state.mapping.state),
+  }
+}
+
+function allowedMappingCommands(mappingState) {
+  if (mappingState === 'stopped') return ['save', 'start']
+  if (mappingState === 'idle' || mappingState === 'error') return ['start']
+  if (mappingState === 'mapping') return ['stop']
+  if (mappingState === 'saving' || mappingState === 'starting') return ['stop']
+  return []
 }
 
 function buildMockCloud(pointCount, elapsed, source) {
@@ -532,6 +598,7 @@ function scheduleReconnect() {
 function setConnectionState(label) {
   state.bridgeConnected = label === 'connected' || label === 'mock'
   if (!state.bridgeConnected) markBridgeOffline(label)
+  updateMappingControls()
 }
 
 function markBridgeOffline(label) {
@@ -569,6 +636,8 @@ function offlineTopics(stateText) {
 
 function handleJson(payload) {
   if (payload.type === 'status') updateStatus(payload)
+  if (payload.type === 'mapping_status') updateMappingStatus(payload.mapping)
+  if (payload.type === 'mapping_command_result') updateMappingCommandResult(payload)
   if (!state.bridgeConnected) return
   if (payload.type === 'pose') updatePose(payload)
   if (payload.type === 'imu') updateImu(payload)
@@ -643,6 +712,8 @@ function appendPoints(values, header) {
     recenterCamera(layer.bounds, source)
   }
   updatePointUi()
+  updateMappingControls()
+  updateMappingMessage()
 }
 
 function sourceBudget(source) {
@@ -703,6 +774,7 @@ function uploadLayer(layer) {
 
 function updateStatus(payload) {
   const topics = payload.topics || {}
+  state.topicStats = topics
   const lidarState = payload.lidar?.state || 'waiting'
   const rawTopic = topics.raw || {}
   const imuTopic = topics.imu || {}
@@ -728,9 +800,264 @@ function updateStatus(payload) {
   }
   updatePipelineStatus(topics)
   updateBackendDetails(topics)
+  if (payload.mapping) updateMappingStatus(payload.mapping)
   if (payload.pose) updatePose(payload.pose)
   if (payload.imu) updateImu(payload.imu)
   updatePointUi()
+  updateMappingMessage()
+}
+
+function updateMappingCommandResult(payload) {
+  if (payload.mapping) updateMappingStatus(payload.mapping)
+  updateMappingMessage()
+}
+
+function updateMappingStatus(mapping) {
+  if (!mapping) return
+  state.mapping = {
+    ...state.mapping,
+    state: mapping.state || state.mapping.state,
+    message: mapping.message || state.mapping.message,
+    allowedCommands: mapping.allowed_commands || state.mapping.allowedCommands,
+    sessionName: mapping.session_name || '',
+    saveDirectory: mapping.save_directory || '',
+    lastCommand: mapping.last_command || '',
+  }
+  setMappingStatePill(state.mapping.state)
+  updateMappingControls()
+  updateMappingMessage()
+}
+
+function setMappingStatePill(stateText) {
+  const next = mappingDisplayState(stateText || 'idle')
+  ui.mappingState.textContent = MAPPING_STATE_LABELS[next] || next
+  ui.mappingState.classList.remove('is-online', 'is-stale', 'is-waiting', 'is-disconnected')
+  ui.mappingState.classList.add(MAPPING_STATE_CLASS[next] || 'is-waiting')
+}
+
+function mappingDisplayState(stateText) {
+  if (stateText === 'mapping' && !hasRawScanPoints()) return 'waiting'
+  return stateText
+}
+
+function updateMappingControls() {
+  const allowed = new Set(state.mapping.allowedCommands || [])
+  const canSend = state.bridgeConnected || state.mockMode
+  const canSaveMap = allowed.has('save') && hasSavableMapPoints()
+  ui.startMapping.disabled = !canSend || !allowed.has('start')
+  ui.stopMapping.disabled = !canSend || !allowed.has('stop')
+  ui.saveMapping.disabled = !canSend || !canSaveMap
+  ui.mappingSessionName.disabled = !canSend || !allowed.has('start')
+}
+
+function hasSavableMapPoints() {
+  return (state.layers.map?.pointCount || 0) > 0 || (state.layers.optimized?.pointCount || 0) > 0
+}
+
+function hasRawScanPoints() {
+  const rawLayer = state.layers.raw
+  const rawStat = state.topicStats.raw || {}
+  return (rawLayer?.pointCount || 0) > 0 || (rawStat.last_points || 0) > 0
+}
+
+function updateMappingMessage(overrideText = '') {
+  if (overrideText) {
+    ui.mappingMessage.textContent = overrideText
+    return
+  }
+  setMappingStatePill(state.mapping.state)
+  ui.mappingMessage.textContent = mappingProgressMessage()
+}
+
+function mappingProgressMessage() {
+  const mappingState = state.mapping.state
+  if (mappingState === 'idle') return '等待开始'
+  if (mappingState === 'starting') return '正在初始化，请稍等'
+  if (mappingState === 'mapping') {
+    if (!hasRawScanPoints()) return '正在初始化，等待雷达数据'
+    if (!hasSavableMapPoints()) return '已收到雷达数据，正在生成地图'
+    return '正在建图，地图持续更新中'
+  }
+  if (mappingState === 'saving') return '正在保存地图'
+  if (mappingState === 'stopping') return '正在停止建图'
+  if (mappingState === 'stopped') {
+    if (hasSavableMapPoints()) return '建图已停止，可以保存地图'
+    if (hasRawScanPoints()) return '建图已停止，但还没有可保存的地图'
+    return '建图已停止'
+  }
+  if (mappingState === 'error') return '建图遇到问题，请检查设备'
+  return state.mapping.message || '-'
+}
+
+function sendMappingCommand(command) {
+  if (command === 'save' && !hasSavableMapPoints()) {
+    updateMappingMessage('没有可保存的地图')
+    updateMappingControls()
+    return
+  }
+  if (command === 'start') updateMappingMessage('正在初始化，请稍等')
+  if (command === 'stop') updateMappingMessage('正在停止建图')
+  if (command === 'save') updateMappingMessage('正在保存地图')
+  const payload = {
+    type: 'mapping_command',
+    command,
+    session_name: ui.mappingSessionName.value.trim(),
+    save_directory: '',
+  }
+  if (state.mockMode) {
+    applyMockMappingCommand(payload)
+    return
+  }
+  if (ws?.readyState !== WebSocket.OPEN) return
+  ws.send(JSON.stringify(payload))
+}
+
+function applyMockMappingCommand(payload) {
+  const command = payload.command
+  const current = state.mapping.state
+  const allowed = new Set(allowedMappingCommands(current))
+  if (!allowed.has(command)) {
+    updateMappingCommandResult({
+      command,
+      accepted: false,
+      message: `${MAPPING_STATE_LABELS[current] || current} 状态下不能执行此操作`,
+      mapping: mockMappingSnapshot(),
+    })
+    return
+  }
+  if (command === 'start') {
+    state.mapping.state = 'mapping'
+    state.mapping.message = '正在初始化，请稍等'
+    state.mapping.sessionName = payload.session_name
+    state.mapping.saveDirectory = payload.save_directory
+  } else if (command === 'stop') {
+    state.mapping.state = 'stopped'
+    state.mapping.message = '建图已停止'
+  } else if (command === 'save') {
+    state.mapping.message = '已请求保存地图'
+    state.mapping.saveDirectory = payload.save_directory || state.mapping.saveDirectory
+  }
+  state.mapping.lastCommand = command
+  updateMappingCommandResult({
+    command,
+    accepted: true,
+    message: state.mapping.message,
+    mapping: mockMappingSnapshot(),
+  })
+}
+
+async function loadMapHistory() {
+  if (!ui.historyList || state.mapHistory.loading) return
+  state.mapHistory.loading = true
+  renderMapHistory({ loading: true })
+  try {
+    const response = await fetch('/api/maps', { cache: 'no-store' })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const payload = await response.json()
+    state.mapHistory.sessions = payload.sessions || []
+    renderMapHistory(payload)
+  } catch (error) {
+    renderMapHistory({
+      available: false,
+      sessions: [],
+      message: '读取失败，请稍后重试',
+    })
+  } finally {
+    state.mapHistory.loading = false
+  }
+}
+
+function renderMapHistory(payload) {
+  const sessions = payload.sessions || state.mapHistory.sessions || []
+  if (payload.loading) {
+    ui.historySummary.textContent = '正在读取'
+    ui.historyList.innerHTML = '<p class="history-empty">正在读取历史地图</p>'
+    return
+  }
+  if (sessions.length === 0) {
+    ui.historySummary.textContent = payload.message || '暂无历史地图'
+    ui.historyList.innerHTML = '<p class="history-empty">暂无可下载地图</p>'
+    return
+  }
+  ui.historySummary.textContent = `${sessions.length} 份地图`
+  ui.historyList.innerHTML = sessions.map(historySessionHtml).join('')
+}
+
+function historySessionHtml(session) {
+  const files = session.files || []
+  const sessionId = session.id || session.name
+  const deleting = state.mapHistory.deleting === sessionId
+  return `
+    <details class="history-item">
+      <summary class="history-item-head">
+        <span class="history-expand-icon" aria-hidden="true"></span>
+        <span class="history-item-text">
+          <strong title="${escapeAttr(session.path || session.name)}">${escapeHtml(session.name)}</strong>
+          <em>${escapeHtml(session.modified_label || '')}</em>
+        </span>
+        <span class="history-actions">
+          <a class="history-icon-button history-archive-download" href="${escapeAttr(session.archive_url || '#')}" download title="下载整份地图" aria-label="下载整份地图">
+            <img src="./assets/download.png" alt="" aria-hidden="true" />
+          </a>
+          <button
+            class="history-icon-button history-delete"
+            type="button"
+            data-session-id="${escapeAttr(sessionId)}"
+            data-session-name="${escapeAttr(session.name)}"
+            title="删除地图"
+          aria-label="删除地图"
+          ${deleting ? 'disabled' : ''}
+        >
+            <img src="./assets/delete.svg" alt="" aria-hidden="true" />
+          </button>
+        </span>
+      </summary>
+      <div class="history-files">
+        ${files.map(historyFileHtml).join('')}
+      </div>
+    </details>
+  `
+}
+
+function historyFileHtml(file) {
+  return `
+    <a class="history-download" href="${escapeAttr(file.download_url)}" download>
+      <span class="history-download-icon" aria-hidden="true">
+        <img src="./assets/download.png" alt="" />
+      </span>
+      <span class="history-download-text">
+        <strong>${mapFileLabel(file.name)}</strong>
+        <em>${formatBytes(file.size)}</em>
+      </span>
+    </a>
+  `
+}
+
+async function deleteMapSession(sessionId, sessionName) {
+  if (!sessionId || state.mapHistory.deleting) return
+  const confirmed = window.confirm(`确定删除地图“${sessionName || sessionId}”吗？此操作不能撤销。`)
+  if (!confirmed) return
+  state.mapHistory.deleting = sessionId
+  renderMapHistory({ sessions: state.mapHistory.sessions })
+  try {
+    const response = await fetch(`/api/maps/session?id=${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
+    if (!response.ok) throw new Error('delete failed')
+    await loadMapHistory()
+  } catch (error) {
+    updateMappingMessage('删除失败，请稍后重试')
+  } finally {
+    state.mapHistory.deleting = ''
+    renderMapHistory({ sessions: state.mapHistory.sessions })
+  }
+}
+
+function mapFileLabel(filename) {
+  if (filename === 'map_optimized.pcd') return '优化地图'
+  if (filename === 'map_raw.pcd') return '原始地图'
+  if (filename === 'poses_tum.txt') return 'TUM 位姿'
+  if (filename === 'poses_kitti.txt') return 'KITTI 位姿'
+  if (filename === 'poses_matrix.txt') return '矩阵位姿'
+  return filename
 }
 
 function setStatePill(element, stateText) {
@@ -995,6 +1322,8 @@ function clearCloud() {
   state.bounds = null
   state.latestFramePoints = 0
   updatePointUi()
+  updateMappingControls()
+  updateMappingMessage()
 }
 
 function recenterCamera(bounds, source) {
@@ -1144,6 +1473,21 @@ ui.pointBudget.addEventListener('input', () => {
 ui.clearCloud.addEventListener('click', clearCloud)
 ui.resetView.addEventListener('click', resetCameraView)
 ui.followPose.addEventListener('click', toggleFollowPose)
+ui.startMapping.addEventListener('click', () => sendMappingCommand('start'))
+ui.stopMapping.addEventListener('click', () => sendMappingCommand('stop'))
+ui.saveMapping.addEventListener('click', () => sendMappingCommand('save'))
+ui.refreshHistory.addEventListener('click', loadMapHistory)
+ui.historyList.addEventListener('click', (event) => {
+  const deleteButton = event.target.closest('.history-delete')
+  if (deleteButton) {
+    event.preventDefault()
+    event.stopPropagation()
+    deleteMapSession(deleteButton.dataset.sessionId, deleteButton.dataset.sessionName)
+    return
+  }
+  if (!event.target.closest('.history-archive-download')) return
+  event.stopPropagation()
+})
 window.addEventListener('resize', resizeRenderer)
 
 function trimLayersToBudget() {
@@ -1158,6 +1502,8 @@ function trimLayersToBudget() {
     layer.pointCount = budget
     uploadLayer(layer)
   }
+  updateMappingControls()
+  updateMappingMessage()
 }
 
 function unionBounds(a, b) {
@@ -1208,6 +1554,32 @@ function compact(value) {
   return String(value)
 }
 
+function formatBytes(value) {
+  if (!Number.isFinite(value) || value <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let size = value
+  let unit = 0
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024
+    unit += 1
+  }
+  return `${size.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[char])
+}
+
+function escapeAttr(value) {
+  return escapeHtml(value)
+}
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value))
 }
@@ -1217,6 +1589,19 @@ function vectorNorm(values) {
   return Math.sqrt(values.reduce((sum, value) => sum + Number(value) * Number(value), 0))
 }
 
-initThree()
-connect()
-render()
+function startApp() {
+  updateMappingControls()
+  updateMappingMessage()
+  try {
+    initThree()
+    connect()
+    loadMapHistory()
+    render()
+  } catch (error) {
+    console.error('WebGL initialization failed; mapping controls remain available.', error)
+    connect()
+    loadMapHistory()
+  }
+}
+
+startApp()
